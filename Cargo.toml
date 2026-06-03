@@ -1,0 +1,110 @@
+[package]
+name = "ace-gf"
+version = "0.1.0"
+edition = "2021"
+description = "ACE-GF — Atomic Cryptographic Entity Generative Framework"
+license = "BUSL-1.1"
+keywords = ["acegf", "bip39", "ed25519", "x25519", "solana"]
+repository = "https://github.com/acechain-io/acegf-wallet"
+
+[package.metadata.wasm-pack.profile.release]
+# wasm-opt handled by build-wasm.sh post-build step for maximum hardening
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+# Skip wasm-opt in dev builds for faster compilation
+wasm-opt = false
+
+# ============================================
+#  Release profile — hardened for production
+# ============================================
+[profile.release]
+lto = true              # Full link-time optimization — inlines across crates, fewer identifiable boundaries
+codegen-units = 1        # Single codegen unit — maximum optimization, all code merged before lowering
+opt-level = "z"          # Optimize for smallest binary (also reduces analyzable surface area)
+strip = true             # Strip all symbol tables and debug info from the binary
+panic = "abort"          # No panic unwind tables — smaller binary, no stack trace leakage
+
+[lib]
+name = "acegf"
+# cdylib: for WASM and dynamic libraries (.so, .dylib)
+# staticlib: for iOS/Android static libraries (.a)
+# rlib: for Rust library usage
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["pqc"]
+pqc = []
+zk = ["zk-ace", "dep:stwo"]
+
+[dependencies]
+bip39 = "2.2"
+bs58 = "0.5"
+hkdf = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+base64ct = { version = "1.6.0", features = ["alloc"] }
+hex = "0.4"
+zeroize = "1.8"
+fips204 = { version = "0.4", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+fips203 = { version = "0.4", default-features = false, features = ["ml-kem-768", "default-rng"] }
+#tokio = { version = "1", features = ["full"] }
+arrayref = "0.3.9"
+subtle = "2.5"
+lazy_static = "1.4"
+aes-gcm = "0.10.3"
+base64 = "0.21"
+rsa = { version = "0.9", optional = true }
+#generic-array = "1.0.0"
+sha3 = "0.10"
+# k256 with recoverable signature support for EVM transaction signing
+k256 = { version = "0.13", features = ["ecdsa", "sha256", "ecdsa-core", "schnorr"] }
+bech32 = "0.9"
+blake2-rfc = "0.2"
+ripemd = "0.1"
+num-bigint = "0.4"
+num-integer = "0.1"
+argon2 = "0.5"
+thiserror = "2.0.17"
+uuid = { version = "1.18", features = ["v4", "js"] }
+aead = "0.5"
+aes-siv = "0.7"
+typenum = "1.17"
+crypto-common = "0.1.7"
+generic-array = "0.14"
+chacha20poly1305 = "0.10"
+getrandom = { version = "0.2", features = ["js"] }
+rand = { version = "0.8", features = ["getrandom"] }
+rand_chacha = "0.3"
+
+# ZK-ACE: optional dependencies for zero-knowledge proof integration
+stwo = { version = "2.2.0", features = ["prover"], optional = true }
+zk-ace = { path = "../ace-zk", optional = true }
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rlp = "0.5"
+blake2 = "0.10"
+aes-gcm-siv = "0.11"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = ["console"] }
+# ML-DSA-44 via fips204 pure Rust — works on all platforms including WASM
+
+# secp256k1 and bitcoin are not WASM-compatible, use only for native builds
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+secp256k1 = { version = "0.29", features = ["global-context", "rand-std"] }
+bitcoin = { version = "0.32", features = ["rand-std"] }
+slip10 = "0.4"
+libc = "0.2"
+
+[build-dependencies]
+cbindgen = "0.27"
+cc = "1.0"
+
+# IMPORTANT: fips204 is patched from a local vendor directory to eliminate /tmp
+# build dependency. Security patches from upstream are NOT automatically applied.
+# Periodically check https://crates.io/crates/fips204 for updates and re-vendor.
+[patch.crates-io]
+fips204 = { path = "vendor/fips204" }

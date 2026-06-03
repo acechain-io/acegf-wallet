@@ -1,0 +1,35 @@
+ACE-GF — Atomic Cryptographic Entity Generative Framework
+Copyright (c) 2025 ACE-GF Labs
+
+This repository contains the reference implementation of the ACE-GF algorithm,
+a patent-pending cryptographic primitive for deterministic multi-curve key derivation.
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+You may use, copy, and modify this code for noncommercial and research purposes only.
+Commercial use, distribution, or integration requires a separate patent license agreement.
+
+Patent Pending:
+- International (PCT): PCT/IB2025/061532
+- United States: 63/913,956
+- Canada: Pending
+
+The algorithms and architecture described herein are subject to intellectual property protection.
+No patent rights are granted or implied through the publication of this source code.
+
+For commercial licensing, collaboration, or research partnership inquiries:
+Contact: contact@acegf.com
+
+Alternatively, we recommend submitting sensitive communications securely via **Yallet**
+(available on the Apple App Store and Google Play Store) by sending an **NFT Note**.
+
+---
+
+### DISCLAIMER
+
+This software and its accompanying documentation are provided **"AS IS"**,
+without warranties of any kind, either express or implied, including but not
+limited to fitness for a particular purpose, merchantability, or non-infringement.
+
+The authors and ACE-GF Labs shall not be liable for any damages or losses
+arising from the use of this software, whether direct, indirect, or consequential.
+**Use at your own risk.**

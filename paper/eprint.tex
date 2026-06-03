@@ -1,0 +1,1450 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage[margin=1in]{geometry}
+\usepackage{float}
+\usepackage{amsthm}
+\usepackage{amsmath}
+\newcommand{\AES}{\mathsf{AES}}
+\newcommand{\GCM}{\mathsf{GCM}}
+\newcommand{\SIV}{\mathsf{SIV}}
+\newcommand{\AESGCMSIV}{\AES\text{-}\GCM\text{-}\SIV}
+\newcommand{\HKDF}{\mathsf{HKDF}}
+\newcommand{\Argon}{\mathsf{Argon2id}}
+\newcommand{\REV}{\mathsf{REV}}
+\newcommand{\negl}{\mathsf{negl}}
+\newcommand{\Adv}[1]{\mathbf{Adv}^{#1}}
+\newcommand{\Prf}{\mathsf{PRF}}
+\newcommand{\RO}{\mathsf{RO}}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{fontspec}
+\usepackage{luatexja}
+\usepackage{emoji}
+\usepackage{algpseudocode}
+\usepackage{makecell}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{tikz}
+\newcommand{\Encode}{\textsf{Encode}}
+% 引入必要的 TikZ 库
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, calc, backgrounds, shadows}
+
+% 定义图表样式 (Styles)
+\tikzset{
+  basicbox/.style = {draw, rounded corners, minimum height=1cm, align=center, font=\small},
+  input/.style = {basicbox, fill=green!10, text width=2.2cm},
+  process/.style = {basicbox, rectangle, fill=blue!10, text width=3.2cm, minimum height=1.4cm},
+  secret/.style = {basicbox, fill=red!20, dashed, text width=4.5cm, font=\bfseries},
+  artifact/.style = {basicbox, fill=yellow!20, double, text width=3.5cm},
+  pqcbox/.style = {basicbox, dashed, fill=purple!10, text width=2cm},
+  policy/.style = {basicbox, dashed, draw=orange!80, fill=orange!5, text width=3cm, font=\footnotesize\itshape},
+  arrow/.style = {thick, ->, >=Stealth, rounded corners},
+  lbl/.style = {fill=white, inner sep=2pt, font=\scriptsize, align=center, text=black!80}
+}
+\usepackage{amsfonts}
+\captionsetup[algorithm]{justification=centering}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{definition}{Definition}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small\itshape Jian Sheng Wang}
+\lhead{\small\itshape ACE-GF}
+\cfoot{\thepage}
+\title{ACE-GF: An Atomic, Seed-Storage-Free Identity Primitive for Autonomous Digital Entities}
+\author{
+  \texttt{Jian Sheng Wang} \\
+  \texttt{jason@acegf.com} \\
+  Montreal, Canada
+}
+\date{December 08, 2025}
+\setcounter{tocdepth}{1}
+\begin{document}
+  \maketitle
+  \begin{abstract}
+   We present \textbf{ACE-GF}, a deterministic identity primitive in which no master seed is ever stored or exported.
+   In contrast to hierarchical deterministic wallet constructions, where long-term root material is persistently recorded, ACE-GF recovers the root entropy only ephemerally from a sealed ciphertext and an authorization credential.
+   The sealing step is instantiated via \textbf{AES--GCM--SIV}, whose nonce-misuse resistance enables deterministic reconstruction under a fixed nonce without compromising confidentiality.
+   We formalize the syntax of a Seed-Storage-Free Identity scheme and provide formal arguments supporting its confidentiality and context isolation properties:
+   (i) the sealed artifact is indistinguishable from random under chosen-plaintext attack, and
+   (ii) derived keys for distinct domains are pseudorandom and independent, preventing cross-context leakage even under key compromise.
+   These properties enable stateless credential rotation and authorization-binding revocation (with security proportional to the entropy of the chosen credential components) without rekeying or maintaining server-side state. We provide game-based security arguments under the random oracle model and standard assumptions on AES-GCM-SIV and HKDF.
+  \end{abstract}
+
+  \clearpage % 强制分页
+  \pagenumbering{arabic} % 设置页码为阿拉伯数字
+  \setcounter{page}{1}  % 重置页码计数器，Introduction 所在的页码为 1
+  \section{Introduction}
+
+  \subsection{Motivation and Problem Statement}
+
+  The persistent storage of a long-term root secret is fundamental to most deterministic key derivation systems, including hierarchical wallets (e.g., BIP32 \cite{bip32}) and conventional key management infrastructures. This widespread design principle, however, introduces an intrinsic single point of failure: the compromise of the stored root seed leads to the irrevocable loss of the entire identity and all derived assets. We ask whether such persistence is cryptographically necessary, and show that a deterministic identity system can be achieved without storing any long-term entropy at rest. Beyond this existential risk, reliance on a persistent long-term secret complicates key lifecycle management. Specifically, rotating the underlying authorization credentials without altering the cryptographic identity (i.e., changing the password without changing the public keys) is cryptographically non-trivial or requires maintaining burdensome stateful re-encryption mechanisms.
+
+  This paper addresses the problem of constructing a stateless, seed-storage-free identity primitive. We ask: \emph{Is it possible to construct a deterministic key derivation scheme where the root entropy is never stored at rest, yet can be reliably reconstructed for multi-curve operations, while supporting stateless credential rotation and immediate revocation?}
+
+  Existing solutions often conflate the mathematical identity (the root of key derivation) with the authorization (the secret used to access that root). We propose a rigorous separation of these concepts through a new primitive we call \textbf{ACE-GF} (Multi-Scheme Context-Isolated Key Derivation Function).
+
+  \subsection{Our Contribution}
+
+  We formalize an instantiation of deterministically reconstructible identity roots, and refer to this abstraction as an Atomic Digital Identity (ADI). This is a naming convenience and not a claim of cryptographic novelty. The resulting construction is a cryptographic primitive that satisfies the following properties:
+
+  \begin{enumerate}
+   \item \textbf{Ephemeral Root Entropy:} The system relies on a 256-bit Root Entropy Value ($\mathsf{REV}$) that exists only in ephemeral memory during execution and is never persisted to disk.
+   \item \textbf{Deterministic Reconstruction:} The $\mathsf{REV}$ is reconstructible solely from a user-held credential (passphrase) and a public, sealed artifact (mnemonic), using Deterministic Authenticated Encryption (DAE).
+   \item \textbf{Context Isolation:} Derived keys are cryptographically isolated across different elliptic curves (e.g., Ed25519, Secp256k1, X25519) and protocols via structured HKDF expansion, preventing cross-domain leakage.
+   \item \textbf{Stateless Revocation:} We provide a mechanism for authorization-binding revocation by destroying a partial credential component, rendering the $\mathsf{REV}$ computationally irrecoverable without requiring server-side state or key rotation.
+  \end{enumerate}
+
+  ACE-GF constitutes a deterministic identity primitive that supports stateless reconstruction, domain-isolated derivation, and credential-binding revocation without persistent secrets. ACE-GF can thus be viewed as instantiating a Deterministic Authenticated Identity Reconstruction Primitive for Autonomous Digital Entities (ADEs).
+
+  \subsection{Syntax Definition}
+
+  Before describing the concrete instantiation, we formally define the syntax of our proposed scheme.
+  We define a \textbf{Seed-Storage-Free Identity Scheme} as a tuple of four polynomial-time algorithms:
+  \[
+   \Pi = (\mathsf{Setup}, \mathsf{Seal}, \mathsf{Unseal}, \mathsf{Derive})
+  \]
+  defined as follows:
+
+  \begin{description}
+   \item[$\mathsf{Setup}(1^\lambda) \to \mathsf{REV}$:]
+   A probabilistic algorithm that takes a security parameter $\lambda$ (typically 256) and outputs a uniformly random Root Entropy Value $\mathsf{REV} \in \{0,1\}^\lambda$.
+
+   \item[$\mathsf{Seal}(\mathsf{REV}, \mathsf{cred}) \to \sigma$:]
+   A deterministic algorithm that takes the root entropy $\mathsf{REV}$ and an authorization credential $\mathsf{cred}$. It outputs a public sealed artifact $\sigma$.
+
+   \item[$\mathsf{Unseal}(\sigma, \mathsf{cred}) \to \mathsf{REV} \cup \{\bot\}$:]
+   A deterministic algorithm that takes the sealed artifact $\sigma$ and a candidate credential $\mathsf{cred}$. It outputs the original $\mathsf{REV}$ if authentication succeeds, or $\bot$ otherwise.
+   \emph{Crucially, this operation is the only means to instantiate $\mathsf{REV}$; $\mathsf{REV}$ is not stored.}
+
+   \item[$\mathsf{Derive}(\mathsf{REV}, \mathsf{ctx}) \to sk_{\mathsf{ctx}}$:]
+   A deterministic algorithm that takes the ephemeral $\mathsf{REV}$ and a unique context string $\mathsf{ctx}$. It outputs a derived secret key $sk_{\mathsf{ctx}}$.
+  \end{description}
+
+  \vspace{0.5em}
+  \paragraph{Correctness.}
+  For any credential $\mathsf{pass}$ and sealed artifact $\sigma$,
+  \[
+   \mathsf{Unseal}(\sigma,\mathsf{pass}) = \mathsf{REV}
+   \quad \Longleftrightarrow \quad
+   \sigma = \mathsf{Seal}(\mathsf{REV},\mathsf{pass}).
+  \]
+  That is, $\mathsf{Unseal}$ acts as a left--inverse of $\mathsf{Seal}$ under
+  the appropriate credential: identity reconstruction succeeds if and only if
+  authentication succeeds.
+  \vspace{0.5em}
+
+  \subsection{Security Goals}
+
+  The security of $\Pi$ rests on two primary pillars, which we analyze in later sections. Security follows from the non-negligible complexity of credential guessing and the security guarantees of the underlying cryptographic primitives:
+  \begin{enumerate}
+   \item \textbf{Confidentiality of $\mathsf{REV}$ at Rest:} Given $\sigma$, an adversary without $\mathsf{cred}$ cannot distinguish $\mathsf{REV}$ from a random string of length $\lambda$. This relies on the security of the underlying Deterministic Authenticated Encryption (DAE) scheme (specifically AES-GCM-SIV).
+   \item \textbf{Domain Separation:} Given a derived key $sk_{\mathsf{ctx_1}}$, an adversary cannot gain any advantage in distinguishing $sk_{\mathsf{ctx_2}}$ (where $\mathsf{ctx_1} \neq \mathsf{ctx_2}$) from random, nor can they recover $\mathsf{REV}$. This relies on the pseudorandomness of HKDF. This design prevents cross-protocol leakage even under full compromise of a derived key, ensuring lateral isolation across heterogeneous cryptographic domains.
+  \end{enumerate}
+
+  This paper provides a concrete instantiation of $\Pi$ utilizing Argon2id for credential hardening, AES-GCM-SIV for the sealing mechanism, and HKDF-SHA256 for domain-separated derivation. We further demonstrate how this primitive enables secure lifecycle management for autonomous digital entities without persistent secrets. ACE-GF can thus be viewed as instantiating a Deterministic Authenticated Identity Reconstruction Primitive.
+
+  \section{Preliminaries}
+
+  We verify the security of our construction based on the hardness assumptions of its underlying primitives: the Argon2id password-hashing function, the HKDF key derivation function, and the AES-GCM-SIV authenticated encryption scheme.
+
+  \subsection{Nonce-Misuse Resistant Authenticated Encryption (NMR-AE)}
+
+  A critical requirement for our stateless construction is the ability to encrypt safely without managing a stateful counter or generating random nonces during the sealing process. We rely on the security notion of Nonce-Misuse Resistance (NMR) as formalized by Rogaway and Shrimpton~\cite{rogaway2006deterministic}.
+
+  Let $\Pi = (\mathcal{K}, \mathcal{E}, \mathcal{D})$ be an authenticated encryption scheme. We say $\Pi$ provides \emph{misuse-resistant indistinguishability} if the advantage of an adversary $\mathcal{A}$ in distinguishing the encryption oracle from a random string oracle is negligible, even when $\mathcal{A}$ is allowed to query the oracle with repeated nonces (so long as the $(N, M)$ pair is unique).
+
+  \begin{definition}[NMR-AE Security]
+   For any PPT adversary $\mathcal{A}$ making $q$ queries,
+   \[
+  \mathbf{Adv}_{\Pi}^{\mathsf{NMR}}(\mathcal{A}) = \left| \Pr[\mathcal{A}^{\mathcal{E}_K(\cdot, \cdot)} \Rightarrow 1] - \Pr[\mathcal{A}^{\$(\cdot, \cdot)} \Rightarrow 1] \right| \le \text{negl}(\lambda)
+   \]
+   where $\mathcal{E}_K(N, M)$ returns the real ciphertext and $\$(\cdot, \cdot)$ returns a random string of $|C|$.
+  \end{definition}
+
+  In ACE-GF, we employ \textbf{AES-GCM-SIV} (RFC 8452), which is proven to satisfy this NMR property. This allows us to fix the nonce $N$ to a global constant while maintaining confidentiality, provided the key $K$ (derived from the credential) has sufficient entropy.
+
+  \subsection{Random Oracles and Password Hardness}
+  We model the Argon2id function as a Random Oracle (RO). We assume the user's credential $\mathsf{cred}$ is drawn from a distribution with min-entropy $H_\infty(\mathsf{cred})$. The security of the sealing phase is bounded by the probability of guessing $\mathsf{cred}$ offline.
+
+  \section{Related Work}\label{sec:related}
+
+  Deterministic wallets and key management systems have traditionally relied on persistent master seeds~\cite{bip39,bip32}. BIP32 hierarchical deterministic wallets and BIP39 mnemonic phrases dominate cryptocurrency applications, but require long-term storage of a master seed (or an encrypted version thereof). Even when an additional ``passphrase'' is used (as supported by major hardware wallets~\cite{ledger-passphrase,trezor-passphrase}), the underlying entropy remains persistently stored and constitutes a single point of compromise.
+
+  Several systems encrypt the master seed with a user-provided password and store the ciphertext. These approaches eliminate plaintext seed storage but suffer from three critical limitations that ACE-GF directly addresses:
+  (i) changing the password requires re-encryption of the seed (stateful rotation),
+  (ii) revocation typically requires server-side state or re-issuance of new seeds, and
+  (iii) all derived keys across curves share the same root, offering no cryptographic domain isolation.
+
+  Threshold and multi-signature schemes (e.g., GG20, FROST) distribute key material across parties but still require persistent shares or coordinated key generation, making them unsuitable for fully autonomous entities.
+
+  Password-based authenticated encryption of high-entropy secrets appears in OPAQUE~\cite{opaque} and related augmented PAKEs, where a sealed credential enables password-only key recovery. While philosophically similar, these protocols target user authentication rather than long-term deterministic multi-curve identity.
+
+  Cloud key management services (AWS KMS, Google Cloud KMS, HashiCorp Vault transit engine) offer stateless rotation and fine-grained revocation, but depend on centralized trusted infrastructure and do not provide deterministic derivation across heterogeneous elliptic curves.
+
+  Nonce-misuse-resistant authenticated encryption (e.g., AES-GCM-SIV) has previously been used for deterministic key wrapping, but never (to our knowledge) combined with memory-hard KDFs and strict domain-separated HKDF expansion to achieve a fully seed-storage-free, multi-curve, revocable identity primitive.
+
+  \setlength{\extrarowheight}{2pt}
+  \begin{table*}[t]
+   \centering
+   \caption{Comparison with existing approaches}
+   \label{tab:comparison}
+   \footnotesize
+   \begin{tabular}{lccccc}
+  \toprule
+  Scheme / System &
+  \makecell{Seed\\Stored?} &
+  \makecell{Stateless\\Rotation?} &
+  \makecell{Stateless\\Revocation?} &
+  \makecell{Domain\\Isolation?} &
+  \makecell{No Trusted\\Setup?} \\
+  \midrule
+  BIP32/39 + opt. passphrase  & Yes  & No  & No   & No  & Yes \\
+  Encrypted seed backups    & Yes$^*$ & No  & No   & No  & Yes \\
+  Ledger/Trezor passphrase   & Yes  & No  & No   & No  & Yes \\
+  OPAQUE / Encrypted KMS    & No  & Yes  & Partial  & N/A & Partial \\
+  Cloud KMS (AWS/GCP/Vault)  & No  & Yes  & Yes$^\dagger$ & Yes & No \\
+  \textbf{ACE-GF (ours)}    & \textbf{No} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} \\
+  \bottomrule
+   \end{tabular}
+   \vspace{4pt}
+   \small
+   $^*$ ciphertext only \quad
+   $^\dagger$ stateful revocation \quad
+   Partial: sometimes requires trusted hardware/server
+  \end{table*}
+
+  Table~\ref{tab:comparison} summarizes the key distinctions. To the best of our knowledge, ACE-GF is the first construction we are aware of that simultaneously satisfies all five properties highlighted in Table~\ref{tab:comparison}.
+
+  \section{Security Assumptions and Limitations}
+
+  This section explicitly defines the foundational assumptions required for the security argumentation of ACE-GF and acknowledges the scope of the threat model and the construction's inherent limitations.
+
+  \subsection{Security Assumptions}
+
+  The security of the ACE-GF construction is based on the security of its underlying primitives and specific modeling assumptions regarding the adversarial environment.
+
+  \begin{description}
+   \item[Assumption A1: PRF-Security of HKDF]
+   The HMAC-based Extract-and-Expand Key Derivation Function (HKDF-SHA256) is modeled as a secure Pseudorandom Function (PRF). Its output is indistinguishable from a uniformly random string, even when the key ($\mathsf{REV}$) is secret and the domain-separation context ($\mathsf{ctx}$) is known to the adversary.
+   \item[Assumption A2: Random Oracle Model for Argon2id]
+   The Argon2id password-hashing function is modeled as a Random Oracle (RO) when the credential is unknown to the adversary. This implies the output key $K$ is uniformly distributed and computationally infeasible to guess without querying the RO with the correct credential $\mathsf{pass}$.
+   \item[Assumption A3: Nonce-Misuse-Resistant IND-CPA]
+   The underlying authenticated encryption scheme, AES-GCM-SIV, satisfies the Nonce-Misuse Resistant Indistinguishability under Chosen-Plaintext Attack ($\mathsf{NMR}$-$\mathsf{IND}$-$\mathsf{CPA}$) property. This allows for the use of a fixed nonce ($N=0^{96}$) while maintaining confidentiality.
+   \item[Assumption A4: Credential Entropy]
+   The user-supplied credential $\mathsf{pass}$ is assumed to have sufficient min-entropy such that an offline dictionary or brute-force attack remains computationally infeasible within the identity's service life.
+  \end{description}
+
+  \subsection{Limitations and Threat Surface}
+
+  We explicitly acknowledge the following limitations of the current construction and security model:
+
+  \begin{itemize}
+   \item \textbf{Credential Entropy Bound \& Fixed Nonce:} The security of the $\mathsf{REV}$ at rest is strictly bounded by the entropy of the user-supplied credential. The fixed, deterministic nonce $N=0^{96}$ (Assumption A3) makes the sealing mechanism entirely reliant on the high entropy of the derived key $K$ (from the passphrase). Crucially, the effectiveness of the authorization-binding revocation mechanism hinges entirely on the entropy of the $\mathsf{pass}_{\mathrm{admin}}$ component. If $\mathsf{pass}_{\mathrm{admin}}$ is weak, an attacker can perform an offline dictionary attack against the sealed artifact $\sigma$, thereby bypassing the intended revocation entirely. ACE-GF does not explicitly model or prevent these offline dictionary attacks; it only raises their computational cost via the memory-hard KDF (Argon2id).
+   \item \textbf{Side-Channel Attacks:} We do not model the execution environment against side-channel attacks. While Argon2id is generally designed to mitigate certain time-memory trade-offs, practical implementations may still be vulnerable to timing, cache-based, or power analysis attacks, particularly during the execution of the memory-hard KDF on untrusted platforms. Defense against these attacks requires hardware assistance (e.g., Trusted Execution Environments or dedicated secure elements).
+   \item \textbf{Shared Mnemonic Risk:} ACE-GF defines a single identity ($\mathsf{REV}$) for a given mnemonic. Sharing the mnemonic among multiple physical users is a protocol-level misuse that compromises the fundamental principle of a self-sovereign identity and is outside the scope of our security model.
+   \item \textbf{Universal Composability (UC):} A formal proof of security in the Universal Composability (UC) framework is not provided. We rely on standard-model game-based arguments.
+   \item \textbf{Idealized Modeling:} The security argumentation relies on modeling Argon2id as a Random Oracle (A2). A tight security reduction based on concrete complexity and parameters remains an open area for further research.
+   \item \textbf{Memory Remanence Risk:} While the implementation employs explicit memory zeroization techniques to erase ephemeral secrets, security against advanced physical attacks (e.g., cold boot attacks to recover secrets from memory) is outside the scope of this work and would require hardware-assisted execution (e.g., using $\mathsf{HSMs}$ or $\mathsf{TPMs}$).
+  \end{itemize}
+
+
+  \section{ACE-GF Overview}
+
+  This section provides a high-level description of the ACE-GF architecture,
+  its relationship to the \emph{Atomic Digital Identity} (ADI) primitive,
+  and the trust boundaries under which the system operates.
+  ACE-GF is a fully seed-storage-free construction:
+  the 256-bit Root Entropy Value (REV) is never persisted, never exported, and
+  exists only ephemerally during derivation of cryptographic identity material.
+
+  \subsection{System Architecture}
+
+  ACE-GF consists of two coupled but independently secure pipelines:
+  (1) the deterministic identity pipeline, which instantiates an ADI, and
+  (2) the sealing pipeline, which enables mnemonic-based recoverability
+  without exposing or storing any secret material.
+
+  \paragraph{Architectural Component Mapping.}
+  Figure 1 utilizes several abstract components to visualize data flow:
+  \begin{itemize}
+   \item \textbf{Entropy Binding:} Mathematically represents the process where the concatenated passphrase ($\mathsf{pass} = \mathsf{pass}_{\mathrm{user}} \parallel 0x00 \parallel \mathsf{pass}_{\mathrm{admin}}$) is fed into the Argon2id Key Derivation Function, generating the symmetric key $K$.
+   \item \textbf{Plaintext Payload ($\mathsf{REV}$):} Represents the 256-bit Root Entropy Value, which serves as the sole plaintext input to the AES-GCM-SIV encryption function.
+   \item \textbf{Derived Sealing Key ($K$):} This is the 256-bit output key from Argon2id, used exclusively for the authenticated encryption of the $\mathsf{REV}$ to produce the Sealed Artifact ($\sigma$).
+  \end{itemize}
+
+  \begin{figure}[!ht]
+   \centering
+% 使用 resizebox 确保图表自动缩放以适应页面宽度
+   \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[
+    node distance=1.5cm and 2.0cm,
+    scale=0.92,
+    transform shape,
+    usetikzlibrary/.append style={shadows}
+  ]
+
+    % --- 样式定义 ---
+    \tikzset{
+     basicbox/.style = {draw, rounded corners, minimum height=1cm, align=center, font=\small, drop shadow={opacity=0.25, shadow xshift=2pt, shadow yshift=-2pt}},
+     input/.style = {basicbox, fill=green!10, text width=2.2cm},
+     process/.style = {basicbox, rectangle, fill=blue!10, text width=3.2cm, minimum height=1.4cm},
+     secret/.style = {basicbox, fill=red!10, dashed, text width=4.5cm, font=\bfseries},
+     artifact/.style = {basicbox, fill=yellow!20, double, text width=3.5cm},
+     pqcbox/.style = {basicbox, dashed, fill=purple!10, text width=2cm},
+     arrow/.style = {thick, ->, >=Stealth, rounded corners},
+     lbl/.style = {fill=white, inner sep=2pt, font=\scriptsize, align=center, text=black!80, rounded corners=2pt}
+    }
+
+    % --- 1. Root Entropy ---
+    \node (rev) [secret] {Root Entropy Value\\(REV - 256 bit)\\\normalfont\scriptsize\textit{Ephemeral / Never Stored}};
+
+    % --- 2. Left Pipeline: Identity Derivation ---
+    \node (hkdf) [process, below left=1.8cm and 2.0cm of rev] {\textbf{HKDF-SHA256}\\(Domain Separation)};
+
+    % Identity Keys
+    \node (ed25519) [basicbox, below=1.2cm of hkdf, xshift=-3.2cm, text width=2cm, anchor=north] {Ed25519\\Keypair};
+
+    \node (secp) [basicbox, right=0.25cm of ed25519, text width=2cm] {Secp256k1\\Keypair};
+    \node (x25519) [basicbox, right=0.25cm of secp, text width=2cm] {X25519\\(xID)};
+
+    % 省略号位置微调
+    \node (dots) [right=0.1cm of x25519, yshift=0.1cm] {\Large \textbf{...}};
+
+    % PQC 节点
+    \node (pqc) [pqcbox, right=0.1cm of dots, text width=2cm] {PQC\\Keypair};
+
+    % --- 3. Right Pipeline: Sealing & Recovery ---
+    \node (aes) [process, below right=1.8cm and 3.5cm of rev] {\textbf{AES-GCM-SIV}\\(Encryption)};
+    \node (argon) [process, above=1.5cm of aes, fill=orange!20] {\textbf{Argon2id}\\(Key Derivation)};
+    \node (pass_user) [input, above=1.0cm of argon, xshift=-2.8cm] {User\\Passphrase};
+    \node (pass_admin) [input, above=1.0cm of argon, xshift=2.8cm] {Administrator\\Passphrase};
+    % --- Revocation Control Context 节点已被删除 ---
+    \node (mnemonic) [artifact, below=1.2cm of aes] {\textbf{Sealed Artifact $\sigma$}\\(Encoded Ciphertext)};
+
+    % --- Connections ---
+    \draw [arrow] (rev) -| node[lbl, pos=0.3] {Raw Entropy\\(Context Input)} (hkdf);
+    \draw [arrow] (hkdf) -- node[lbl, pos=0.5] {Derived\\Seeds} (ed25519.north);
+    \draw [arrow] (hkdf) -- (secp.north);
+    \draw [arrow] (hkdf) -- (x25519.north);
+    \draw [arrow] (hkdf) -- (pqc.north);
+
+    % --- Passphrase Connections (Removed "Entropy Binding" label) ---
+    \draw [arrow] (pass_user) -- node[lbl, left, pos=0.4] {Passphrase\\Composition} (argon.north west); % Changed label
+    \draw [arrow] (pass_admin) -- (argon.north east);
+    % --- Policy/Revocation 节点及其连接线已删除 ---
+    \draw [arrow] (argon) -- node[lbl] {Derived Sealing Key\\($K$)} (aes);
+
+    \coordinate (turn1) at ($(rev.south) + (0, -0.8)$);
+    \coordinate (turn2) at ($(aes.west) + (-1.0, 0)$);
+    \draw [arrow] (rev.south) -- (turn1)
+    -- node[lbl, pos=0.5, align=center, yshift=0.3cm] {Plaintext Payload\\(REV)}
+    (turn1 -| turn2)
+    -- (turn2)
+    -- (aes.west);
+
+    \draw [arrow] (aes) -- node[lbl] {Ciphertext + Tag\\(Sealed)} (mnemonic);
+
+    % --- Background Grouping ---
+    % 需要调整 Pipeline 2 的 fit 范围，因为它不再包含 policy 节点
+    \begin{scope}[on background layer]
+     \node [fit=(hkdf) (ed25519) (pqc), fill=blue!5, rounded corners, draw=blue!20, dashed, inner sep=0.4cm,
+    label={[anchor=south west, blue!50, align=left]north west:\textbf{Pipeline 1:}\\Deterministic Identity\\(ADI Construction)}] {};
+
+     % 调整 fit 范围以排除 policy 节点 (使用 pass_user, pass_admin, argon, aes, mnemonic)
+     \node [fit=(pass_user) (pass_admin) (argon) (mnemonic) (aes), fill=red!5, rounded corners, draw=red!20, dashed, inner sep=0.4cm,
+    label={[red!50, align=center]above:\textbf{Pipeline 2:}\\Sealing \& Lifecycle}] {};
+    \end{scope}
+
+  \end{tikzpicture}%
+   }
+   \caption{\textbf{ACE-GF System Architecture.} Arrows indicate data flow semantics. The design separates deterministic identity generation (left) from the secure sealing lifecycle (right). The architecture enforces that identity depends solely on REV, whereas authorization depends solely on passphrase binding.}
+   \label{fig:architecture}
+  \end{figure}
+
+  \paragraph{Deterministic Identity Pipeline (ADI Construction).}
+  \begin{align*}
+   \mathsf{REV}
+   &\xrightarrow{\;\mathsf{HKDF+DS}\;}
+   \text{Curve- and Context-Specific Seeds} \\
+   &\xrightarrow{\;\text{KeyGen}\;}
+   \text{Private/Public Keypairs} \\
+   &\xrightarrow{\;\text{AddressEnc / IdentityEnc}\;}
+   \text{Identity Material}.
+  \end{align*}
+
+  More explicitly:
+  \[
+   \mathsf{REV}
+   \;\longrightarrow\;
+   \{
+   s_{\mathsf{Ed25519}},\,
+   s_{\mathsf{Secp256k1}},\,
+   s_{\mathsf{X25519}},\,
+   s_{\mathsf{xID}},\,
+   \ldots
+   \}
+  \]
+
+  \[
+   \longrightarrow
+   \{
+   \text{Ed25519 keys},\,
+   \text{Secp256k1 keys},\,
+   \text{X25519 DH keys (xIdentity/xID)},\,
+   \ldots
+   \}.
+  \]
+
+  Each component is derived via domain-separated HKDF from the same
+  256-bit root. For convenience of exposition, we refer to the resulting
+  collection of curve- and context-specific seeds as an \emph{Atomic Digital
+  Identity (ADI)}---a descriptive term for the set of deterministically
+  derived identity material associated with a given root. This terminology
+  is not intended to introduce a new primitive; it merely provides a compact
+  name for the aggregate identity state reconstructed by a \emph{Crypto Entity}.
+
+  \paragraph{xIdentity (xID).}
+  ACE-GF derives a deterministic X25519-based encryption identity (xID)
+  that serves as the long-term E2EE identity for a Crypto Entity.
+  Session keys are derived via HKDF using unique context labels, providing
+  unlinkable per-session encryption while retaining deterministic root identity.
+
+  \paragraph{Mnemonic Sealing Pipeline.}
+  \[
+   \mathsf{REV} + \mathsf{pass\_real}
+   \;\xrightarrow{\;\mathsf{AES\text{-}GCM\_Enc}\;}\;
+   \mathsf{sealed}
+   \;\xrightarrow{\;\text{Encode}\;}\;
+   \mathsf{mnemonic}.
+  \]
+
+  Recovery proceeds as:
+  \[
+   \mathsf{mnemonic} + \mathsf{pass\_real}
+   \;\xrightarrow{\;\mathsf{AES\text{-}GCM\_Dec}\;}\;
+   \mathsf{REV}.
+  \]
+
+  Thus the reversible pipeline is:
+  \[
+   \mathsf{REV} \;\longleftrightarrow\; \mathsf{sealed} \;\longleftrightarrow\; \mathsf{mnemonic}.
+  \]
+
+  The mnemonic is \emph{not} a seed, nor a BIP39-compatible secret; it is a
+  UX-friendly encoding of sealed REV. No entropy is derived from the mnemonic
+  itself.
+
+  \paragraph{Seed-Storage-Free Property.}
+  ACE-GF never persists:
+  \begin{itemize}
+   \item the $\mathsf{REV}$,
+   \item any derived seeds,
+   \item any private keys,
+   \item any intermediate secret state.
+  \end{itemize}
+
+  Identity material is reconstructed only at runtime from a sealed artifact–credential pair and is immediately erased after use.
+
+  \paragraph*{BIP39 Compatibility Disclaimer.}
+  The mnemonic uses the BIP39 wordlist solely as an encoding mechanism for
+  the sealed ADI root. It is not a BIP39 seed, does not interact with HD
+  wallet derivation, and is not compatible with any SLIP-0010 or BIP32
+  construction. The encoding is representational only.
+
+  \subsection{Design Goals}
+
+  ACE-GF is designed to satisfy the structural requirements of Autonomous Digital Entities (e.g., AI agents, autonomous services, and robotics) by providing a seed-storage-free identity primitive. The system achieves the following goals:
+
+  \begin{enumerate}
+   \item \textbf{Deterministic multi-curve identity:}
+   Ed25519, Secp256k1, X25519, and future curve parameters are derived deterministically
+   from a single ADI root, ensuring identity persistence across lifecycles.
+
+   \item \textbf{Strict domain isolation:}
+   All seeds are expanded via HKDF-SHA256 with structured domain labels,
+   providing cryptographic independence so that key exposure in one context
+   never compromises others.
+
+   \item \textbf{Native E2EE identity capability:}
+   The system derives a deterministic X25519-based xIdentity to serve as a
+   static root for Diffie--Hellman negotiations, enabling secure, forward-secret
+   communication channels without seed persistence.
+
+   \item \textbf{Seed-storage-free operation:}
+   No long-term secret (seed or private key) is ever persisted. Identity is
+   reconstructed only ephemerally from the sealed artifact.
+
+   \item \textbf{Stateless secret rotation:}
+   Unlimited passphrase updates are supported without rekeying, re-deriving,
+   or altering the underlying identity root.
+
+   \item \textbf{Stateless Controlled Revocation:}
+   Identity is revoked solely by deleting the administrator passphrase component,
+   requiring no server-side state or key management infrastructure.
+
+   \item \textbf{Asset-holding capability:}
+   Digital Entities can deterministically sign transactions, hold addresses,
+   and interact with value-bearing protocols across heterogeneous chains.
+
+   \item \textbf{PQC migratability:}
+   PQC key material can be deterministically derived from the same ADI
+   without updating mnemonics or altering identity continuity.
+  \end{enumerate}
+
+  These goals position ACE-GF as a general-purpose identity foundation
+  beyond traditional wallets or KMS, suitable for AI agents, robotics,
+  decentralized infrastructures, and autonomous systems.
+
+  \subsection{Trust Boundaries}
+
+  ACE-GF distinguishes clearly among three actors:
+
+  \paragraph{User.}
+  Holds:
+  \begin{itemize}
+   \item the mnemonic (sealed ciphertext), and
+   \item the user passphrase component $\mathsf{pass\_user}$.
+  \end{itemize}
+  The user never receives or stores $\mathsf{REV}$ or any seed.
+
+  \paragraph{Administrator (Optional).}
+  Supplies:
+  \begin{itemize}
+   \item an administrator-controlled passphrase component $\mathsf{pass\_admin}$.
+  \end{itemize}
+  The administrator can:
+  \begin{itemize}
+   \item revoke identity by deleting $\mathsf{pass\_admin}$,
+   \item maintain cryptographic control over the identity's authorization lifecycle without storing keys,
+   \item prevent impersonation (cannot reconstruct identity alone).
+  \end{itemize}
+
+  \paragraph{Adversary.}
+  May:
+  \begin{itemize}
+   \item obtain the mnemonic,
+   \item observe all public keys,
+   \item intercept signatures or E2EE messages.
+  \end{itemize}
+
+  Cannot:
+  \begin{itemize}
+   \item derive $\mathsf{REV}$ without both passphrase components,
+   \item violate domain-isolated derivation between curves,
+   \item bypass authorization revocation,
+   \item reconstruct xID or other private keys without sealed REV.
+  \end{itemize}
+
+  The system assumes no persistent secrets, no trusted hardware, and relies entirely on
+  KDF isolation, AES-GCM-SIV IND-CCA security, and the secrecy of passphrase components.
+
+
+  \section{Formal Specification of ACE-GF}
+
+  This section provides the complete formal specification of ACE-GF as a
+  construction of an \emph{Atomic Digital Identity} (ADI).
+  All operations rely exclusively on standardized primitives
+  (HKDF-SHA256, AES-GCM-SIV, Argon2id, Ed25519, Secp256k1, X25519).
+  The system is strictly seed-storage-free: the Root Entropy Value (REV)
+  exists only ephemerally during computation.
+
+  \subsection{Atomic Digital Identity (ADI)}
+
+  We define an \emph{Atomic Digital Identity (ADI)} as a triple:
+  \[
+   \mathsf{ADI} = (\mathsf{REV}, F_{\mathsf{DS}}, \mathsf{Seal})
+  \]
+  where:
+  \begin{itemize}
+   \item $\mathsf{REV} \in \{0,1\}^{256}$ is uniformly sampled and never stored,
+   \item $F_{\mathsf{DS}}$ is a domain-separated HKDF expansion function,
+   \item $\mathsf{Seal}$ is the authenticated encryption scheme binding the ADI
+   to a sealed artifact–credential pair.
+  \end{itemize}
+
+  Given domain labels $\mathsf{DS}_1, \ldots, \mathsf{DS}_N$, an ADI deterministically
+  generates all curve-, context-, and protocol-specific seeds:
+  \[
+   s_i = F_{\mathsf{DS}}(\mathsf{REV}, \mathsf{DS}_i).
+  \]
+  An ADI therefore forms the cryptographic basis of a \emph{Crypto Entity},
+  which aggregates all deterministic keys, addresses, and encryption identities
+  derived from a single root.
+
+  ACE-GF provides a concrete construction of $\mathsf{ADI}$.
+
+  \subsection{Generation of the Root Entropy Value}
+
+  The ADI root is generated from a 256-bit uniformly random value.
+
+  \begin{algorithm}[h]
+   \caption{\textsc{GenerateREV}}
+   \begin{center}
+  \begin{minipage}{0.9\linewidth}
+    \small
+    \begin{algorithmic}[1]
+     \State $\mathsf{REV} \gets \{0,1\}^{256}$
+     \State \Return $\mathsf{REV}$
+    \end{algorithmic}
+  \end{minipage}
+   \end{center}
+  \end{algorithm}
+
+  No additional structure is imposed; $\mathsf{REV}$ is the sole entropy source
+  for all subsequent deterministic derivations.
+
+  \subsection{Passphrase-Sealing Scheme}
+
+  ACE-GF ensures that $\mathsf{REV}$ is never stored by sealing it under a
+  passphrase-derived AES-GCM-SIV key.
+  A memory-hard KDF (Argon2id) derives this key from the user/administrator passphrase.
+
+  \subsubsection{Sealing Key Derivation}
+
+  Let:
+  \[
+   \mathsf{pass} = \mathsf{pass_{user}} \parallel 0x00 \parallel \mathsf{pass_{admin}}
+  \]
+  denote the composable passphrase.
+  The sealing key is derived as:
+  \[
+   K = \mathsf{Argon2id}(
+   \text{password} = \mathsf{pass},\;
+   \text{salt} = \texttt{"ACEGF-KDF-NATIVE-V1"},\;
+   t,\; m,\; p).
+  \]
+
+  Argon2id is used only for human-chosen inputs; it never interacts with HKDF.
+
+  \subsubsection{Sealing Procedure}
+
+  We utilize a deterministic authenticated encryption primitive. To ensure deterministic reconstruction of the mnemonic (critical for user verification), we employ a static system-wide salt for the Argon2id derivation, while relying on tunable hardness parameters to resist precomputation.
+
+  \begin{algorithm}[H]
+   \caption{Seal($\mathsf{REV}$, $\mathsf{pass}$)}
+   \begin{algorithmic}[1]
+  \State \textbf{Parameters:}
+  \State \quad $N \gets 0^{96}$ \Comment{fixed 96-bit zero nonce}
+  \State \quad $AD \gets \texttt{"ACEGF-V1"}$ \Comment{version identifier}
+  \State \quad $S \gets \texttt{"ACEGF-KDF-NATIVE-V1"}$ \Comment{fixed system-wide salt}
+  \State $K \gets \mathsf{Argon2id}(\mathsf{pass}, S, t=3, m=128\,\text{MiB}, p=4)$
+  \State $C \parallel T \gets \mathsf{AES-GCM-SIV}_K.\mathsf{Enc}(N, \mathsf{REV}, AD)$
+  \State $\mathsf{sealed} \gets C \parallel T$ \Comment{384-bit authenticated ciphertext}
+  \State \Return \textsf{Encode}(\textsf{sealed}) \Comment{lossless encoding (implementation-defined)}
+   \end{algorithmic}
+  \end{algorithm}
+
+  \subsection{Design Rationale and Security Considerations}
+
+  \subsubsection*{Justification for Fixed Nonce ($IV=0$)}
+  A central design choice in ACE-GF is the use of a static, system-wide nonce (e.g., $N=0^{96}$) in the \textsc{Seal} procedure. In standard randomized encryption (e.g., AES-GCM), nonce reuse is catastrophic. However, our construction uses \textbf{AES-GCM-SIV}, which provides Nonce-Misuse Resistance (see Section 2.1).
+
+  Since the encryption key $K$ is derived from the credential $\mathsf{cred}$ via a salted KDF, and the plaintext is the high-entropy $\mathsf{REV}$, the pair $(K, \mathsf{REV})$ is unique for each identity.
+  \begin{itemize}
+   \item \textbf{Confidentiality:} Due to the NMR property, encrypting $\mathsf{REV}$ with a fixed nonce yields a ciphertext indistinguishable from random bits to any adversary who does not hold $K$.
+   \item \textbf{Deterministic Output:} The fixed nonce ensures that $\mathsf{Seal}(\mathsf{REV}, \mathsf{cred})$ is a deterministic function. This is a functional requirement for recovering the exact same mnemonic, enabling users to verify they have entered the correct passphrase by comparing the output mnemonic.
+  \end{itemize}
+
+  \subsubsection*{Dependency on Credential Entropy}
+  The security of the $\mathsf{REV}$ at rest depends strictly on the confidentiality of the derived key $K$. As with all password-based authenticated encryption schemes, the system is vulnerable to offline dictionary attacks if $\mathsf{cred}$ has low entropy. We mitigate this by enforcing Argon2id with tunable hardness parameters ($t, m, p$) to raise the cost of brute-force attempts.
+
+  \subsubsection{Unsealing Procedure}
+
+  The unsealing process decodes the payload and authenticates the recovery of the REV.
+
+  \begin{algorithm}[H]
+   \caption{Unseal($\mathsf{mnemonic}, \mathsf{pass}$)}
+   \begin{algorithmic}[1]
+  \State \textbf{Parameters:}
+  \State \quad $AD \gets \texttt{"ACEGF-V1"}$ \Comment{version identifier}
+  \If{ $\neg \mathsf{ACEGFWordlistCheck}(\mathsf{mnemonic})$ } \Return $\bot$ \EndIf
+
+  \State $\mathsf{blob} \gets \mathsf{ACEGFDecode}(\mathsf{mnemonic})$
+  \State Parse $\mathsf{blob}$ as $C \parallel T$ where $|T|=128$
+
+  \State $S \gets \text{"ACEGF-KDF-NATIVE-V1"}$
+  \State $K \gets \mathsf{Argon2id}(\mathsf{pass}, S, t, m, p)$
+  \State $\mathsf{REV} \gets \mathsf{AES\text{-}GCM\text{-}SIV\_Dec}_{K}(0^{96}, C \parallel T, AD)$
+
+  \If{decryption fails} \Return $\bot$ \EndIf
+  \State \Return $\mathsf{REV}$ \Comment{256-bit entropy}
+   \end{algorithmic}
+  \end{algorithm}
+
+  \subsection{Domain-Separated Multi-Curve Seed Derivation}
+
+  Each cryptographic domain derives a pseudorandom seed from $\mathsf{REV}$:
+  \[
+   s_{\mathsf{curve}} =
+   \mathsf{HKDF\_Expand}(\mathsf{REV}, \mathsf{DS}_{\mathsf{curve}}, 32).
+  \]
+
+  Representative domain labels:
+  \begin{align*}
+   \mathsf{DS}_{\mathsf{ed25519}}  &= \texttt{ACEGF-V1-ED25519-SOLANA}, \\
+   \mathsf{DS}_{\mathsf{secp256k1}} &= \texttt{ACEGF-V1-SECP256K1-EVM}, \\
+   \mathsf{DS}_{\mathsf{x25519}}  &= \texttt{ACEGF-V1-X25519-IDENTITY}
+  \end{align*}
+
+  \paragraph{xIdentity (xID).}
+  The derived X25519 key pair serves as the deterministic \emph{xIdentity} (xID) of the Crypto Entity.
+  Unlike ephemeral session keys, the xID is a long-term, stable public identifier used for
+  establishing E2EE channels (e.g., as a static Diffie--Hellman root).
+  It allows the Crypto Entity to be discoverable and addressable across contexts.
+
+  \subsection{Seed Normalization Rules}
+
+  \begin{itemize}
+   \item \textbf{Ed25519:}
+   HKDF output is used directly as 32-byte seed.
+
+   \item \textbf{Secp256k1:}
+   \[
+  k = s_{\mathsf{secp256k1}} \bmod n.
+   \]
+
+   \item \textbf{X25519 / xID:}
+   Clamping per RFC~7748:
+   \[
+  k[0] \leftarrow k[0] \land 248,\quad
+  k[31] \mathrel{\&}= 127,\quad
+  k[31] \mathrel{|}= 64.
+   \]
+  \end{itemize}
+
+  \subsection{Deterministic Key Generation}
+
+  \paragraph{Ed25519 KeyGen.}
+  \[
+   (sk, pk) = \mathsf{Ed25519\_KeyGen}(k_{\mathsf{ed}})
+  \]
+
+  \paragraph{Secp256k1 KeyGen.}
+  \[
+   pk = k_{\mathsf{k1}} \cdot G
+  \]
+
+  \paragraph{X25519 / xID KeyGen.}
+  \[
+   pk = \mathsf{X25519}(k_{\mathsf{x}}, \mathsf{base})
+  \]
+
+  \section{Seed-Storage-Free Identity}
+
+  A defining property of ACE-GF is that the system never stores, persists, or
+  exposes any form of seed material. The Root Entropy Value (REV), all
+  curve-specific seeds, and all private keys exist only ephemerally during
+  derivation. This distinguishes ACE-GF from hierarchical deterministic (HD)
+  wallets and traditional key-management systems, which rely on persistent seed
+  material as a long-term secret.
+
+  \subsection{Definition}
+
+  \begin{definition}[Seed-Storage-Free Identity]
+   A cryptographic identity construction is said to be \emph{seed-storage-free}
+   if the following conditions hold:
+
+   \begin{enumerate}
+  \item The system never stores the root entropy value $\mathsf{REV}$
+  or any derived curve-specific seed in persistent storage.
+
+  \item The system never exposes $\mathsf{REV}$ or seed material to the user,
+  any external interface, or any application-layer subsystem.
+
+  \item All seed material is reconstructed solely from a sealed entropy blob
+  using a passphrase-derived key.
+
+  \item After key derivation, all secret values (including $\mathsf{REV}$,
+  seeds, and private keys) are immediately erased from memory.
+
+   \end{enumerate}
+   An identity satisfying these properties guarantees that no device compromise,
+   backup leak, or filesystem forensics can reveal seed material, because such
+   material never exists at rest.
+  \end{definition}
+
+  In ACE-GF, all determinism originates from $\mathsf{REV}$, but $\mathsf{REV}$
+  is only obtainable through authenticated decryption of the sealed entropy blob.
+  Thus, the mnemonic is not a seed; it is merely an encoding of AES-GCM-SIV ciphertext.
+
+  \subsection{Property: No Seed Persistence}
+
+  Let $\mathsf{sealed}$ be the AES-GCM-SIV encryption of the REV under a passphrase-derived key $K$. Assuming AES-GCM-SIV is IND-CPA secure and provides ciphertext integrity, the sealed value leaks no information about $\mathsf{REV}$, and therefore no seed material is recoverable without knowledge of $K$.
+
+  This property is formally captured by the Sealing Indistinguishability game defined as Definition 4 (Section 10.2) and argued in Theorem 11.1 (Section 11.1).
+
+  \subsection{Comparison to Seed-Based Wallets}
+
+  Most hierarchical deterministic wallet systems---BIP39, SLIP-10, and other
+  seed-centric constructions---rely on storing a long-term master seed.
+  This approach introduces several systemic risks:
+
+  \begin{enumerate}
+   \item \textbf{Disk persistence:}
+   Seeds inevitably appear on disk through application files, backups, logs,
+   or virtual memory snapshots.
+
+   \item \textbf{Seed leakage:}
+   If the seed leaks, all derived private keys across all curves and chains
+   are permanently compromised.
+
+   \item \textbf{Backup exposure:}
+   Traditional backups preserve seeds indefinitely, creating long-lived attack
+   surfaces and forensic recoverability.
+
+   \item \textbf{Key rotation requires seed replacement:}
+   Changing passphrase or credential parameters requires constructing an
+   entirely new seed and migrating all associated assets.
+
+  \end{enumerate}
+  ACE-GF eliminates these structural weaknesses:
+
+  \begin{itemize}
+
+   \item \textbf{No stored seed exists to be recovered.}
+   Even full-disk forensics cannot reveal $\mathsf{REV}$ or any derived seed
+   because these values never appear on disk.
+
+   \item \textbf{Mnemonic leakage alone is harmless.}
+   The mnemonic contains only AES-GCM-SIV ciphertext, not seed material.
+   Without the passphrase-derived key, recovery of $\mathsf{REV}$ is infeasible.
+
+   \item \textbf{Seed rotation is unnecessary.}
+   Secret rotation is \emph{stateless}: the underlying identity remains fixed,
+   while security can be strengthened by changing only the passphrase component.
+
+   \item \textbf{Cross-domain compromise is prevented.}
+   The exposure of a persistent master seed leads to a catastrophic compromise of all derived keys across all domains.
+   In ACE-GF, no master seed exists.
+
+  \end{itemize}
+  In effect, ACE-GF replaces the traditional notion of a persistently stored
+  seed with a reversible, encrypted representation of the root entropy value,
+  dramatically reducing the attack surface of deterministic identity systems.
+
+  \section{Passphrase Binding}
+
+  A defining property of ACE-GF is the strict separation between
+  \emph{identity} and \emph{authorization}.
+  Identity is determined solely by the Atomic Digital Identity (ADI) root
+  $\mathsf{REV}$, while authorization is determined by the passphrase that
+  encrypts and protects $\mathsf{REV}$.
+  This separation enables two capabilities uncommon in classical seed-based
+  systems:
+
+  \begin{itemize}
+   \item \textbf{stateless secret rotation} — arbitrary updates of the passphrase
+   without altering identity, and
+   \item \textbf{stateless revocation} — unilateral administrator-driven invalidation
+   of a Crypto Entity without storing any key material.
+  \end{itemize}
+
+  The core invariant is:
+
+  \[
+   \text{Identity} = f(\mathsf{REV}) \qquad\text{and}\qquad
+   \text{Authorization} = \mathsf{pass}.
+  \]
+
+  Thus identity is immutable (as long as $\mathsf{REV}$ is fixed), while
+  authorization is freely mutable.
+
+  \subsection{Passphrase Binding}
+
+  ACE-GF composes the passphrase from user- and administrator-controlled fragments:
+
+  \[
+   \mathsf{pass}
+   =
+   \mathsf{pass_{user}}
+   \;\Vert\; 0x00 \;\Vert\;
+   \mathsf{pass_{admin}}.
+  \]
+
+  The delimiter $0x00$ ensures injectivity even under variable-length components.
+
+  The sealing key is derived via:
+
+  \[
+   K = \mathsf{Argon2id}(
+   \mathsf{pass},\;
+   \texttt{"ACEGF-KDF-NATIVE-V1"},\;
+   t, m, p).
+  \]
+
+  If the administrator component $\mathsf{pass_{admin}}$ is removed, the user can no
+  longer reconstruct the full passphrase and therefore cannot decrypt the sealed
+  REV. This provides unilateral revocation without storing any secrets.
+
+  \subsection{Stateless Secret Rotation}
+
+  Because the mnemonic encodes only:
+
+  \[
+   \mathsf{mnemonic} = \mathsf{Encode}(C \Vert T),
+  \]
+  where
+  \[
+   (C \parallel T) \;=\; \mathsf{AES\text{-}GCM\text{-}SIV.Encrypt}_{K(\text{pass})}
+   \bigl(N = 0^{96},\; \mathrm{REV},\; \mathrm{AD}\bigr),
+  \]
+  any passphrase update simply re-seals the same $\mathsf{REV}$ under a new
+  passphrase:
+
+  \[
+   \mathsf{mnemonic}_{\text{new}}
+   =
+   \mathsf{Seal}(\mathsf{REV}, \mathsf{pass}_{\text{new}}).
+  \]
+
+  Identity-derived material remains unchanged because it depends only on the
+  domain-separated HKDF expansions of $\mathsf{REV}$.
+
+  \subsection{Algorithm 4: \textsc{RotateSecret}}
+
+  \begin{algorithm}[h]
+   \caption{\textsc{RotateSecret}$(\mathsf{mnemonic}_{\text{old}}, \mathsf{pass}_{\text{old}}, \mathsf{pass}_{\text{new}})$}
+   \begin{algorithmic}[1]
+  \State $\mathsf{REV} \gets \mathsf{Unseal}(\mathsf{mnemonic}_{\text{old}}, \mathsf{pass}_{\text{old}})$
+  \Comment{Recover REV ephemerally}
+  \State $\mathsf{mnemonic}_{\text{new}} \gets \mathsf{Seal}(\mathsf{REV}, \mathsf{pass}_{\text{new}})$
+  \Comment{Re-seal under new passphrase}
+  \State \Return $\mathsf{mnemonic}_{\text{new}}$
+   \end{algorithmic}
+  \end{algorithm}
+
+  This procedure involves no persistent state, no interaction with a server,
+  and no key regeneration.
+  The old mnemonic may be safely discarded.
+
+  \subsection{Property: Rotation Soundness}
+
+  Let $\mathsf{REV}$ be the ADI root of a Crypto Entity. For any two distinct passphrases $\mathsf{pass_1}$ and $\mathsf{pass_2}$, the construction guarantees:
+
+  \[
+   \mathsf{Unseal}(\mathsf{Seal}(\mathsf{REV}, \mathsf{pass_1}), \mathsf{pass_1})
+   =
+   \mathsf{Unseal}(\mathsf{Seal}(\mathsf{REV}, \mathsf{pass_2}), \mathsf{pass_2})
+   =
+   \mathsf{REV}.
+  \]
+
+  Thus, all derived seeds, private keys, public keys, addresses, and xID encryption keys remain invariant under secret rotation. The cryptographic security of the newly generated mnemonic (i.e., that it leaks no information about the identity) is guaranteed by the Sealing Indistinguishability argument provided in Section 10.1.
+
+  \section{Authorization-Binding Revocation}
+
+  Organization environments require the ability to revoke a Digital Entity’s
+  authorization without interacting with the user, without storing any
+  long-term secret, and without relying on trusted hardware.
+  ACE-GF achieves these properties through its composable passphrase-binding
+  construction, which cleanly separates:
+
+  \[
+   \underbrace{\text{identity}}_{\text{determined by }\mathsf{REV}}
+   \qquad\text{from}\qquad
+   \underbrace{\text{authorization}}_{\text{determined by passphrase}}.
+  \]
+
+  Identity is immutable as long as the ADI root $\mathsf{REV}$ remains the same;
+  authorization is mutable and revocable without state.
+
+  \subsection{Passphrase Binding Model}
+
+  Let the user contribute a passphrase fragment
+  $\mathsf{pass}_{\mathrm{user}}$ and the organization contribute an independent
+  fragment $\mathsf{pass}_{\mathrm{admin}}$.
+  These two components are bound into a single effective authorization secret:
+
+  \[
+   \mathsf{pass}_{\mathrm{real}}
+   = \mathsf{pass}_{\mathrm{user}}
+   \;\Vert\; 0x00 \;\Vert\;
+   \mathsf{pass}_{\mathrm{admin}}.
+  \]
+
+  The delimiter $0x00$ guarantees injectivity even under variable-length inputs.
+
+  The sealing key is derived exclusively from $\mathsf{pass}_{\mathrm{real}}$:
+  \[
+   K = \mathsf{Argon2id}(
+   \mathsf{pass}_{\mathrm{real}},
+   \texttt{"ACEGF-KDF-NATIVE-V1"},
+   t, m, p
+   ).
+  \]
+
+  This design has three immediate consequences:
+
+  \begin{itemize}
+   \item The \textbf{user cannot reconstruct the REV alone}, since
+   $\mathsf{pass}_{\mathrm{admin}}$ is required.
+
+   \item The \textbf{administrator cannot impersonate the user}, since
+   $\mathsf{pass}_{\mathrm{user}}$ is required.
+
+   \item \textbf{Only the combination of both fragments} reconstructs the ADI.
+  \end{itemize}
+
+  Thus the authorization boundary becomes two-party but with no shared secret
+  between the parties and no stored key material.
+
+  \subsection{Revocation Operation}
+
+  Administrator revocation is executed by deleting
+  $\mathsf{pass}_{\mathrm{admin}}$ from organization storage.
+  Because the REV is recoverable only via:
+
+  \[
+   \mathsf{REV}
+   = \mathsf{Unseal}(\mathsf{mnemonic},\;
+   \mathsf{pass}_{\mathrm{user}} \Vert 0x00 \Vert \mathsf{pass}_{\mathrm{admin}}),
+  \]
+
+  removal of $\mathsf{pass}_{\mathrm{admin}}$ makes it computationally infeasible for the
+  user (or any adversary) to reconstruct the sealing key.
+
+  Revocation is:
+
+  \begin{itemize}
+   \item \textbf{stateless} --- no persistent key material exists,
+   \item \textbf{instantaneous} --- no propagation or synchronization is required,
+   \item \textbf{unilateral} --- the administrator acts without user cooperation,
+   \item \textbf{non-destructive} --- the identity (REV) still exists but is inaccessible.
+  \end{itemize}
+
+  No on-chain transactions, no hardware modules, and no server-side key hierarchies
+  are involved. The mnemonic becomes unusable immediately after revocation.
+
+  \subsection{Property: Revocation Security}
+
+  Let $\mathsf{sealed}$ be the AES-GCM-SIV ciphertext obtained by sealing $\mathsf{REV}$ under the composed key $K(\mathsf{pass}_{\mathrm{real}})$. If the administrator deletes its credential component $\mathsf{pass}_{\mathrm{admin}}$, then any party holding only the mnemonic and the user component $\mathsf{pass}_{\mathrm{user}}$ cannot recover $\mathsf{REV}$ except with negligible probability.
+
+  This property relies on the infeasibility of reconstructing the encryption key without the full credential. It is formally analyzed under the Sealing Indistinguishability framework under the Sealing Indistinguishability framework introduced in Section 10.2 and formalized in Section 11.1, which demonstrates that without the complete credential material, the sealed artifact is computationally indistinguishable from random noise.
+
+  \subsection{Comparison to KMS Revocation}
+
+  Traditional organization KMS systems require:
+
+  \begin{itemize}
+   \item long-term storage of master keys or key-wrapping hierarchies,
+   \item server-side state to track revocation,
+   \item HSM/TPM devices to protect persistent secrets,
+   \item propagation of revocation state across devices.
+  \end{itemize}
+
+  By contrast, ACE-GF:
+
+  \begin{itemize}
+   \item \textbf{stores no master keys},
+   \item \textbf{stores no seeds or private keys},
+   \item \textbf{requires no server-side state},
+   \item \textbf{implements revocation purely by deleting a passphrase component}.
+  \end{itemize}
+
+  Thus ACE-GF provides organization-level lifecycle control without the
+  operational or infrastructural burden typical of centralized KMS deployments.
+  Even in large distributed systems, revocation is trivial, instantaneous, and
+  requires no communication with the Digital Entity.
+
+
+  \begin{definition}[Revocation Unforgeability]
+   The adversary is given $\sigma^*$ and $\mathsf{pass}_{\text{user}}^*$ (but not $\mathsf{pass}_{\text{admin}}^*$). It wins if it outputs $\mathsf{REV}^*$.
+   Advantage is at most $Q \cdot 2^{-\mu_{\text{admin}}}$ where $Q$ is the number of offline Argon2id evaluations and $\mu_{\text{admin}}$ is the min-entropy of the missing admin component.
+  \end{definition}
+
+
+
+  \section{Security Model and Formal Games}
+
+  Having formally defined ACE-GF and its ADI foundation, we now establish its security in the standard model. To rigorously evaluate the security of the proposed \textbf{ACE-GF} construction $\Pi = (\mathsf{Setup}, \mathsf{Seal}, \mathsf{Unseal}, \mathsf{Derive})$, we define two fundamental security experiments (games) between a Challenger $\mathcal{C}$ and an Adversary $\mathcal{A}$.
+
+  \subsection{Adversarial Capabilities}
+
+  We model $\mathcal{A}$ as a Probabilistic Polynomial-Time (PPT) algorithm. The adversary has access to:
+  \begin{itemize}
+   \item The public specification of algorithms $\mathsf{Seal}$, $\mathsf{Unseal}$, and $\mathsf{Derive}$.
+   \item The public parameters (salt, iteration counts, domain labels).
+   \item Oracles corresponding to the honest execution of the system (as defined in the games below).
+  \end{itemize}
+
+  \subsection{Confidentiality of the Sealed Artifact (Sealing Indistinguishability)}
+
+  The primary confidentiality goal is that the sealed artifact $\sigma$ (i.e., the mnemonic) reveals no information about the root entropy $\mathsf{REV}$ to an adversary who does not possess the complete credential.
+  Since real-world credentials are human-chosen passphrases of limited entropy, we explicitly model this in the security definition.
+
+  \begin{definition}[Sealing Indistinguishability]\label{def:ind-seal}
+  Consider the following experiment $\mathsf{Exp}_{\Pi,\mathcal{A}}^{\mathsf{IND-SEAL}}(\lambda,\mu)$ between a challenger $\mathcal{C}$ and a PPT adversary $\mathcal{A}$:
+
+  \begin{enumerate}
+   \item \textbf{Parameters:} The experiment takes a min-entropy parameter $\mu \in \mathbb{N}$ (representing the assumed entropy of realistic passphrases, e.g., $\mu \ge 40$ bits).
+   \item \textbf{Setup:} $\mathcal{C}$ runs $\mathsf{Setup}(1^\lambda)$ to obtain $\mathsf{REV}^* \gets \{0,1\}^\lambda$.
+   $\mathcal{C}$ samples a challenge credential $\mathsf{cred}^*$ from an arbitrary distribution over $\{0,1\}^*$ that has min-entropy at least $\mu$ (the exact distribution is public and chosen by the reduction).
+   \item \textbf{Challenge:} $\mathcal{C}$ flips a fair coin $b \overset{\$}{\gets} \{0,1\}$.
+   \begin{itemize}
+  \item If $b=0$: $\sigma^* \gets \mathsf{Seal}(\mathsf{REV}^*,\mathsf{cred}^*)$
+  \item If $b=1$: $\sigma^* \gets \{0,1\}^{|\mathsf{Seal}(\mathsf{REV}^*,\mathsf{cred}^*)|}$ (random string of identical length)
+   \end{itemize}
+   \item \textbf{Query Phase:} $\mathcal{A}$ is given $\sigma^*$ and may perform any polynomial-time computation. $\mathcal{A}$ is \emph{not} given $\mathsf{cred}^*$.
+   \item \textbf{Guess:} $\mathcal{A}$ outputs a bit $b' \in \{0,1\}$ and wins if $b'=b$.
+  \end{enumerate}
+
+  The advantage of $\mathcal{A}$ is
+  \[
+   \mathbf{Adv}_{\Pi,\mathcal{A}}^{\mathsf{IND-SEAL}}(\lambda,\mu) \;=\;
+   \Bigl|\Pr[b'=b] - \tfrac{1}{2}\Bigr|.
+  \]
+
+  We say ACE-GF satisfies \emph{Sealing Indistinguishability} if for every PPT $\mathcal{A}$ and every polynomially bounded $\mu(\lambda)$,
+ \begin{equation*}
+ \begin{split}
+ \mathbf{Adv}_{\Pi,\mathcal{A}}^{\mathsf{IND-SEAL}}(\lambda,\mu(\lambda))
+ &\le 2^{-\mu(\lambda)} \\
+ &+ \mathbf{Adv}_{\mathsf{AES\text{-}GCM\text{-}SIV}}^{\mathsf{NMR\text{-}IND\text{-}CPA}}(\lambda) \;+\; \negl(\lambda),
+ \end{split}
+ \end{equation*}
+  where the NMR-IND-CPA advantage is taken over adversaries with comparable resources.
+  \end{definition}
+
+  \noindent In Theorem~\ref{thm:ind-seal} we prove that ACE-GF meets this bound under Assumptions~A2 (Argon2id modeled as RO) and A3 (AES-GCM-SIV NMR-IND-CPA).
+
+  \textbf{Interpretation.}
+  The term $2^{-\mu}$ exactly captures the unavoidable offline dictionary/brute-force attack when the credential has $\mu$ bits of entropy. The remaining negligible/crypto terms show that, beyond this inevitable guessing probability, the sealed artifact is indistinguishable from random bits.
+
+  \subsection{Domain Separation and Key Unlinkability}
+
+  The second security goal ensures that the disclosure of a derived key in one context (e.g., an Ed25519 signing key) does not compromise the $\mathsf{REV}$ nor any keys in disjoint contexts (e.g., an X25519 encryption key). This relies on the pseudorandomness of the derivation function. We denote this game as $\mathsf{Exp}_{\Pi, \mathcal{A}}^{\mathsf{PRF-DERIVE}}(\lambda)$.
+
+  \begin{definition}[Context Isolation / PRF-Security]
+   Consider the following game between $\mathcal{C}$ and $\mathcal{A}$:
+   \begin{enumerate}
+  \item \textbf{Setup:} $\mathcal{C}$ runs $\mathsf{Setup}(1^\lambda)$ to generate $\mathsf{REV}$.
+  \item \textbf{Training Phase:} $\mathcal{A}$ can adaptively query an oracle $\mathcal{O}_{\mathsf{Derive}}(\cdot)$ with distinct context strings $\mathsf{ctx}_i$. The oracle returns $sk_i \leftarrow \mathsf{Derive}(\mathsf{REV}, \mathsf{ctx}_i)$.
+  \item \textbf{Challenge:} $\mathcal{A}$ submits a challenge context $\mathsf{ctx}^*$ such that $\mathsf{ctx}^*$ has never been queried to $\mathcal{O}_{\mathsf{Derive}}$.
+  \item \textbf{Response:} $\mathcal{C}$ flips a coin $b \in \{0,1\}$.
+  \begin{itemize}
+    \item If $b=0$: $\mathcal{C}$ returns $y^* \leftarrow \mathsf{Derive}(\mathsf{REV}, \mathsf{ctx}^*)$.
+    \item If $b=1$: $\mathcal{C}$ returns a truly random string $y^* \leftarrow \{0,1\}^{|sk|}$.
+  \end{itemize}
+  \item \textbf{Guess:} $\mathcal{A}$ outputs a bit $b'$.
+   \end{enumerate}
+   The adversary wins if $b = b'$. The scheme $\Pi$ satisfies \emph{Context Isolation} if:
+   \[
+  \mathbf{Adv}_{\Pi, \mathcal{A}}^{\mathsf{PRF-DERIVE}}(\lambda) \le \text{negl}(\lambda)
+   \]
+  \end{definition}
+
+  \noindent \textit{Rationale:} This models the HKDF-based derivation as a Pseudorandom Function (PRF). If this property holds, an adversary holding a leaked Bitcoin private key cannot distinguish the corresponding Solana private key (derived from the same $\mathsf{REV}$) from a random string, guaranteeing forward and lateral secrecy.
+
+  \subsection{Revocation Security}
+
+  The revocation mechanism of the ACE-GF scheme is designed to achieve \textbf{Authorization-Binding Revocation} in a stateless manner. This security property, formally defined as \textbf{Revocation Unforgeability} in Definition 3, is vital for managing credential lifecycles without requiring persistent server-side state.
+
+  The root entropy $\mathsf{REV}$ is recovered only through a two-component process: the stored \textbf{Sealed Artifact} ($\mathsf{Artifact}$) and the user-provided \textbf{Authorization Credential} ($\mathsf{pass}_{\mathrm{admin}}$). Since the $\mathsf{Artifact}$ is typically stored persistently, successful revocation is achieved by unilaterally making $\mathsf{pass}_{\mathrm{admin}}$ unavailable (e.g., deletion, reset, or deliberate forgetting).
+
+  The security argument for Revocation Unforgeability relies on two core properties:
+
+  \begin{enumerate}
+   \item \textbf{Confidentiality from $\mathsf{IND\text{-}SEAL}$:} By Definition 4, the $\mathsf{Artifact}$ is computationally indistinguishable from a random string without access to the correct $\mathsf{pass}_{\mathrm{admin}}$. Consequently, the $\mathsf{Artifact}$ alone provides no computational advantage to an attacker $\mathcal{A}$ in recovering the sealing key $K_{\mathsf{SEAL}}$ or the root entropy $\mathsf{REV}$.
+
+   \item \textbf{Entropy of $\mathsf{pass}_{\mathrm{admin}}$:} With the $\mathsf{Artifact}$ rendered useless in the absence of $\mathsf{pass}_{\mathrm{admin}}$, the attacker $\mathcal{A}$'s only remaining strategy to recover $\mathsf{REV}$ is to brute-force the authorization credential. Assuming $\mathsf{pass}_{\mathrm{admin}}$ has a minimum entropy of $\mu_{\mathrm{admin}}$ bits, the probability of success for an attacker $\mathcal{A}$ making $Q$ guesses is strictly bounded by:
+   $$\mathbf{Adv}_{\Pi, \mathcal{A}}^{\mathsf{Rev\text{-}Unf}}(\lambda) \le \frac{Q}{2^{\mu_{\mathrm{admin}}}}$$
+  \end{enumerate}
+
+  When $\mu_{\mathrm{admin}}$ is chosen to be sufficiently large (e.g., $\mu_{\mathrm{admin}} \ge 128$), the success probability becomes negligible, formally securing the \textbf{stateless, unilateral, and authorization-bound revocation} of the identity. The formal argument supporting this claim is provided as Theorem 11.3 in Section 11.
+
+  \section{Security Argumentation}
+
+  In this section, we provide concrete security arguments for the properties defined in Section 9. We employ the \emph{game-hopping} technique, constructing a sequence of games starting from the real adversarial interaction and modifying them step-by-step until the adversary's advantage is bounded by the insecurity of the underlying primitives. The arguments provided herein rely on the idealization of Argon2id as a Random Oracle (Assumption A2).
+
+  \subsection{Argument for Sealing Indistinguishability}\label{sec:proof-ind-seal}
+
+  We first argue that the sealed artifact leaks no information about the root entropy $\mathsf{REV}$, relying on the ideal security of the underlying password-based KDF (Assumption A2) and the misuse-resistance of the encryption scheme (Assumption A3).
+
+\begin{theorem}[Sealing Indistinguishability]\label{thm:ind-seal}
+In the \emph{random-oracle model for the hash function underlying Argon2id}
+(following the standard analysis of memory-hard functions~\cite{coretti2018indifferentiability,blocki2023argon2}),
+and assuming that $\AESGCMSIV$ satisfies nonce-misuse-resistant authenticated encryption
+($\mathsf{NMR\text{-}IND\text{-}CPA}$ security~\cite{gueron2019analysis}),
+the sealed artifact $\sigma$ is computationally indistinguishable from a random string
+of the same length for any adversary without knowledge of the credential.
+
+More precisely, for any probabilistic polynomial-time adversary $\mathcal{A}$
+making at most $Q$ offline evaluations of Argon2id, there exists a negligible function
+$\negl$ such that
+\[
+\Adv{\mathsf{IND\text{-}SEAL}}_{\Pi,\mathcal{A}}(\lambda,\mu)
+\;\le\; Q \cdot 2^{-\mu}
+      \;+\; \Adv{\mathsf{NMR\text{-}IND\text{-}CPA}}_{\AESGCMSIV}({\cal B})
+      \;+\; \negl(\lambda),
+\]
+where $\mu$ is the min-entropy of the credential and $\mathcal{B}$ is a reduction
+running in about the same time as $\mathcal{A}$ (up to small constants).
+\end{theorem}
+
+
+
+  \begin{proof}
+   We proceed via a sequence of games, denoted $\mathrm{G}_0, \mathrm{G}_1, \mathrm{G}_2$. Let $S_i$ be the event that $\mathcal{A}$ wins in Game $\mathrm{G}_i$ (i.e., guesses the bit $b$ correctly).
+
+   \paragraph{Game $\mathrm{G}_0$ (Real Game).}
+   This is the real $\mathsf{Exp}_{\Pi, \mathcal{A}}^{\mathsf{IND-SEAL}}$ game described in Definition 4.
+   The challenger $\mathcal{C}$ selects $\mathsf{cred}^*$, derives $K \leftarrow \mathsf{Argon2id}(\mathsf{cred}^*)$, and computes $\sigma^* \leftarrow \mathsf{Enc}_K(0, \mathsf{REV}^*)$ (if $b=0$) or samples random $\sigma^*$ (if $b=1$).
+   \[
+  \Pr[S_0] = \Pr[\mathcal{A} \text{ wins } \mathsf{Exp}_{\Pi, \mathcal{A}}^{\mathsf{IND-SEAL}}]
+   \]
+
+   \paragraph{Game $\mathrm{G}_1$ (Ideal KDF).}
+   We modify the key derivation step. Instead of computing $K \leftarrow \mathsf{Argon2id}(\mathsf{cred}^*)$, the challenger samples a key $K$ uniformly at random from $\{0,1\}^{256}$.
+   \begin{itemize}
+  \item \textit{Justification:} We model Argon2id as a Random Oracle. Since $\mathsf{cred}^*$ is chosen uniformly from a high-entropy space and is unknown to $\mathcal{A}$, the output of the Random Oracle is indistinguishable from a truly random string to $\mathcal{A}$.
+  \item \textit{Difference:} $|\Pr[S_0] - \Pr[S_1]| \le \mathbf{Adv}_{\mathsf{KDF}}^{\mathsf{Dist}}$, which is negligible.
+   \end{itemize}
+
+   \paragraph{Game $\mathrm{G}_2$ (Ideal Encryption).}
+   We now focus on the encryption step. In $\mathrm{G}_1$, $\mathcal{C}$ uses a truly random key $K$ to encrypt $\mathsf{REV}^*$. In $\mathrm{G}_2$, we replace the ciphertext generation when $b=0$. Instead of computing $\mathsf{Enc}_K(0, \mathsf{REV}^*)$, we replace the output with a truly random string of the same length.
+   Consequently, in Game $\mathrm{G}_2$, $\sigma^*$ is a random string regardless of whether $b=0$ or $b=1$. The adversary's view is independent of the bit $b$.
+   \[
+  \Pr[S_2] = \frac{1}{2}
+   \]
+
+   \paragraph{Reduction to AES-GCM-SIV Security.}
+   The transition from $\mathrm{G}_1$ to $\mathrm{G}_2$ relies on the security of the underlying encryption scheme $\Pi_{\mathsf{AE}}$ (AES-GCM-SIV).
+   Assume there exists a distinguisher $\mathcal{D}$ that distinguishes $\mathrm{G}_1$ from $\mathrm{G}_2$ with non-negligible advantage. We construct a reduction $\mathcal{B}$ that attacks the IND-CPA security of $\Pi_{\mathsf{AE}}$.
+   $\mathcal{B}$ acts as the challenger for $\mathcal{D}$. When $\mathcal{B}$ needs to generate the challenge ciphertext, it forwards the plaintext $\mathsf{REV}^*$ to its own encryption challenger. The encryption challenger returns either the real encryption (scenario $\mathrm{G}_1$) or random bits (scenario $\mathrm{G}_2$). $\mathcal{B}$ forwards this to $\mathcal{D}$. If $\mathcal{D}$ succeeds, $\mathcal{B}$ succeeds.
+   Thus:
+   \[
+  |\Pr[S_1] - \Pr[S_2]| \le \mathbf{Adv}_{\Pi_{\mathsf{AE}}}^{\mathsf{IND-CPA}}(\lambda)
+   \]
+
+   \paragraph{Conclusion.}
+   Combining the bounds, we have:
+   \[
+  \mathbf{Adv}_{\Pi, \mathcal{A}}^{\mathsf{IND-SEAL}}(\lambda) \le \mathbf{Adv}_{\mathsf{KDF}}^{\mathsf{Dist}} + \mathbf{Adv}_{\Pi_{\mathsf{AE}}}^{\mathsf{IND-CPA}}(\lambda)
+   \]
+   Since both terms are negligible by assumption (Argon2id security and AES-GCM-SIV security), the total advantage is negligible.
+  \end{proof}
+
+  \subsection{Argument for Context Isolation}
+
+  We now verify that derived keys in disjoint contexts are computationally indistinguishable from random strings, ensuring that compromising one key does not compromise the identity root or other keys.
+
+  \begin{theorem}
+   If HKDF-SHA256 is a secure Pseudorandom Function (PRF), then ACE-GF satisfies Context Isolation as defined in Definition 5.
+  \end{theorem}
+
+  \begin{proof}
+   Let $F(k, x) = \mathsf{HKDF\_Expand}(k, x, \ell)$ be the derivation function. We proceed by reduction.
+
+   Assume there exists an adversary $\mathcal{A}$ that wins the $\mathsf{PRF-DERIVE}$ game with non-negligible advantage $\epsilon$. We construct an algorithm $\mathcal{B}$ that breaks the PRF security of $F$.
+
+   \paragraph{The Reduction.}
+   $\mathcal{B}$ interacts with a PRF challenger $\mathcal{C}_{\mathsf{PRF}}$. $\mathcal{C}_{\mathsf{PRF}}$ holds a secret key $K$ (which corresponds to $\mathsf{REV}$ in our scheme).
+   \begin{enumerate}
+  \item When $\mathcal{A}$ queries the oracle $\mathcal{O}_{\mathsf{Derive}}$ with context $\mathsf{ctx}_i$, $\mathcal{B}$ forwards $\mathsf{ctx}_i$ to $\mathcal{C}_{\mathsf{PRF}}$ and returns the result to $\mathcal{A}$.
+  \item When $\mathcal{A}$ submits the challenge context $\mathsf{ctx}^*$, $\mathcal{B}$ forwards $\mathsf{ctx}^*$ to $\mathcal{C}_{\mathsf{PRF}}$.
+  \item $\mathcal{C}_{\mathsf{PRF}}$ returns $y^*$, which is either $F(K, \mathsf{ctx}^*)$ or a random string.
+  \item $\mathcal{B}$ passes $y^*$ to $\mathcal{A}$.
+  \item $\mathcal{A}$ outputs a guess $b'$. $\mathcal{B}$ outputs $b'$ as its own guess.
+   \end{enumerate}
+
+   Since $\mathsf{Derive}(\mathsf{REV}, \mathsf{ctx})$ is defined exactly as the PRF evaluation, $\mathcal{B}$ perfectly simulates the view of $\mathcal{A}$. Therefore, the advantage of $\mathcal{B}$ in breaking the PRF is exactly equal to the advantage of $\mathcal{A}$ in breaking Context Isolation.
+   \[
+  \mathbf{Adv}_{\Pi, \mathcal{A}}^{\mathsf{PRF-DERIVE}}(\lambda) = \mathbf{Adv}_{F}^{\mathsf{PRF}}(\lambda)
+   \]
+   Since HKDF is assumed to be a secure PRF, this advantage is negligible.
+  \end{proof}
+
+  \paragraph{Implications for Lateral Leakage.}
+  The context isolation property, enforced by modeling HKDF as a secure PRF (Assumption A1), ensures the strongest possible bound against multi-domain key compromise. Specifically, the adversary's advantage in predicting a derived key $sk_{\mathsf{ctx_2}}$ (where $\mathsf{ctx_1} \neq \mathsf{ctx_2}$) after compromising a key $sk_{\mathsf{ctx_1}}$ is negligible. The security derived from the PRF model implies that compromise in one domain provides no non-zero information gain regarding the Root Entropy Value ($\mathsf{REV}$) or keys in any other disjoint context. This robust lateral isolation is a central security feature of ACE-GF.
+
+\subsection{Argument for Revocation Unforgeability}
+
+Recall from Definition~3 that revocation security requires that,
+after an administrator performs revocation, a user cannot reconstruct
+the pre--revocation state without knowledge of the administrator
+component of the passphrase.  Section~10.4 introduced the corresponding security game.
+
+\begin{theorem}[Revocation Security Bound]\label{thm:revocation}
+Let $\mu_{\text{admin}}$ denote the min--entropy contributed by the
+administrator component of the passphrase, and let $Q$ be the number of
+offline guessing attempts performed by an adversary~$\mathcal{A}$.
+Then for any PPT adversary~$\mathcal{A}$,
+its advantage in the Revocation Unforgeability game satisfies
+\[
+   \mathrm{Adv}^{\mathrm{Rev\text{-}Unf}}_{\mathcal{A}}
+   \;\le\;
+   Q \cdot 2^{-\mu_{\text{admin}}}
+   \;+\;
+   \mathrm{negl}(\lambda),
+\]
+where $\lambda$ is the security parameter.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Since revocation changes only the administrator component of the
+combined passphrase, recovering the pre--revocation state requires
+guessing this component.  Assuming $\mu_{\text{admin}}$ bits of entropy,
+each offline attempt succeeds with probability at most $2^{-\mu_{\text{admin}}}$.
+By a union bound over $Q$ attempts, the claim follows.
+\end{proof}
+
+  \section{Practical Migration Helper (Optional)}
+
+  Although ACE-GF is defined as a seed-storage-free identity primitive,
+  real-world deployments frequently contain long-lived legacy private keys
+  (e.g., ECDSA keys controlling existing blockchain assets).
+  For convenience, we provide a helper function---not part of the primitive
+  and not affecting the security model---that allows such keys to be converted into a Crypto Entity.
+
+  Given a legacy private key $\mathsf{sk}_{\mathrm{legacy}}$ and a passphrase
+  $\mathsf{pass}$, the helper function
+
+  \[
+   \texttt{wei\_to\_crypto\_entity}
+   \;:\;
+   (\mathsf{sk}_{\mathrm{legacy}},\; \mathsf{pass})
+   \longrightarrow
+   \mathsf{mnemonic}
+  \]
+
+  produces an ACE-GF mnemonic whose Crypto Entity is able to reproduce the
+  same legacy address while also obtaining all deterministic multi-curve
+  material defined in ACE-GF.
+
+  This mechanism is purely a practical embedding layer for migration
+  purposes; it does not modify the ACE-GF construction, introduce new
+  assumptions, or affect any aspect of the formal security analysis.
+  For clarity and simplicity, we omit the implementation details.
+
+
+  \section{Implementation}
+
+  We provide a deterministic reference implementation of ACE-GF in Rust.
+  The implementation validates the correctness of the construction, enforces
+  memory hygiene, and guarantees cross-platform determinism. All security
+  claims rely solely on the formal specification; the reference library is
+  not part of the security model.
+
+  \subsection{Reference Library}
+
+  The core library is written in \texttt{no\_std}-compatible Rust and
+  implements:
+
+  \begin{itemize}
+   \item sampling of a 256-bit Root Entropy Value (REV),
+   \item AES-GCM-SIV sealing and unsealing,
+   \item HKDF-SHA256 expansion with strict domain separation,
+   \item deterministic seed derivation for Ed25519, Secp256k1, and X25519,
+   \item passphrase binding and administrator authorization revocation.
+  \end{itemize}
+
+  All sensitive values (REV, curve seeds, AES keys, private keys) exist only
+  ephemerally and are explicitly zeroized upon leaving scope. Stack-local
+  buffers and the \texttt{zeroize} trait are used to minimize memory
+  remanence.
+
+  \subsection{Portability}
+
+  The library compiles to:
+
+  \begin{itemize}
+   \item native platforms (C/FFI consumers),
+   \item WebAssembly,
+   \item iOS and Android mobile targets.
+  \end{itemize}
+
+  All platforms produce byte-for-byte identical outputs for the same sealed artifact–credential pair. This determinism holds across architectures and
+  endianness because nonce formats, domain labels, and all encoding
+  conventions are fixed in the specification. No platform stores the REV or
+  any derived secret at rest.
+
+\subsection{Test Vectors and Proof-of-Concept}
+
+The reference implementation repository provides three essential components for verification and demonstration:
+\begin{itemize}
+  \item \textbf{CLI Subcommands:} A command-line interface (CLI) to demonstrate core functions like $\mathsf{generate}$, $\mathsf{restore}$, $\mathsf{rekey}$ (stateless rotation), and the ability to view identity addresses across chains.
+  \item \textbf{Unit Tests:} Comprehensive test code (e.g., \texttt{test\_acegf.rs}) verifying the cryptographic core, including:
+  \begin{enumerate}
+    \item Domain isolation and cryptographic independence across different curve derivations.
+    \item \textbf{Passphrase Composition}: Secure handling of two-component passphrases (\texttt{primary} and \texttt{secondary}) to ensure correct authorization binding and Dual-Control functionality, which is essential for the proposed stateless revocation mechanism.
+    \item XID Diffie-Hellman (DH) operations and E2EE decryption key resolution.
+    \item \textbf{Legacy Key Migration}: Roundtrip verification for converting pre-existing private keys (e.g., Secp256k1, Ed25519) into a deterministically anchored $\mathsf{REV}$ via the \texttt{wei\_to\_crypto\_entity} helper.
+  \end{enumerate}
+  \item \textbf{Determinism Vectors:} A suite of standardized JSON test vectors that validate the strict deterministic output of the scheme. These fixed-input/fixed-output cases ensure cross-platform compatibility and cover:
+  \begin{enumerate}
+    \item \textbf{256-bit Single-Factor Profile} (Consumer Profile): Derivation using the 256-bit Root Entropy Value ($\mathsf{REV}$) secured by a single passphrase component.
+    \item \textbf{Input Robustness}: Validation using Unicode, Chinese characters, and Emojis to demonstrate correct UTF-8 handling by Argon2id, ensuring deterministic key derivation from complex user inputs.
+  \end{enumerate}
+  \end{itemize}
+The repository serves as a proof-of-concept; it is not a production-ready software distribution.
+
+\begin{center}
+  \url{https://github.com/mscikdf/mscikdf-playground}
+\end{center}
+
+\paragraph{Performance Rationale.}
+ The implementation uses specific, conservative parameters for Argon2id ($t=3, m=128\,\text{MiB}, p=4$, as defined in Algorithm 2). However, for the reference implementation's command-line interface and unit tests (i.e., the proof-of-concept), optimized parameters ($t=2, m=32\,\text{MiB}, p=1$) are intentionally used. These reduced parameters are chosen to minimize execution latency and facilitate rapid testing and demonstration across diverse hardware platforms. The formal parameters ($t=3, m=128\,\text{MiB}, p=4$) are the minimum recommendation for a production-ready system to meet industry-standard memory-hardness requirements and provide strong resistance against brute-force attacks. This baseline serves as a reference for future performance characterization and tuning.
+
+  \section{Conclusion}
+
+  We presented \textbf{ACE-GF}, a cryptographic identity primitive that
+  provides deterministic multi-curve key derivation without storing any
+  long-term secret material. Unlike hierarchical or seed-based constructions,
+  ACE-GF removes persistent master seeds entirely, enabling stateless
+  passphrase rotation and unilateral authorization-binding revocation while
+  preserving a stable deterministic identity.
+
+  ACE-GF formalizes the notion of an \emph{Atomic Digital Identity (ADI)}:
+  a seed-storage-free root from which independent signing, encryption,
+  authentication, and asset-control domains are derived through structured
+  HKDF labeling. This abstraction captures the identity requirements of
+  emerging \emph{Digital Entities}---AI agents, autonomous services, IoT
+  devices, robots, and multi-chain cryptographic systems---which require
+  portable, reconstructible, and domain-isolated cryptographic identities.
+
+  The construction relies solely on well-understood primitives (HKDF,
+  AES-GCM-SIV, Ed25519, Secp256k1, X25519) and inherits their security
+  properties. Because all derived seeds remain isolated through domain
+  separation and the Root Entropy Value is never stored or exported,
+  ACE-GF significantly reduces key-exposure risks and enables consistent
+  identity reconstruction across platforms and trust boundaries.
+
+  \paragraph{Future Work.}
+  Future directions include formal proofs in the universal composability
+  (UC) framework, which is essential for proving the security of composable protocols used by autonomous digital entities. Regarding quantum security, a formal analysis of the security reduction for PQC key derivation domains and the selection of suitable post-quantum sealing primitives to replace the classical AES-GCM-SIV is required. Integration of standardized post-quantum signature and KEM domains, and exploration of protocol-level applications for
+  machine-to-machine identity and autonomous multi-agent coordination are also planned.
+
+    \renewcommand{\refname}{Normative References}
+    \bibliographystyle{plainurl}
+    \bibliography{references}
+
+% ==============================
+%         附录（核弹级强制正确版）
+% ==============================
+\clearpage
+\phantomsection
+\addcontentsline{toc}{section}{Appendix A: Non-Normative Applications}
+
+\begin{center}
+    {\large\bfseries Appendix A: Non-Normative Applications\par}
+    \vspace{1.5em}
+\end{center}
+
+% 强制重置计数器 + 强制编号格式
+\setcounter{section}{0}
+\renewcommand{\thesection}{A}
+\renewcommand{\thesubsection}{A.\arabic{subsection}}
+\setcounter{subsection}{0}
+
+\subsection{Multi-Curve Identity and Asset Control}
+A single $\mathsf{REV}$ deterministically yields signing material across heterogeneous cryptographic ecosystems (e.g., Ed25519, Secp256k1, X25519) enabling unified identity and stateless key reconstruction.
+
+\subsection{Authorization-Controlled Lifecycles}
+The construction enables organization-level key management without persistent secret storage. This is achieved by allowing stateless credential rotation and unilateral revocation via deletion of the $\mathsf{pass}_{\mathrm{admin}}$ component.
+\end{document}

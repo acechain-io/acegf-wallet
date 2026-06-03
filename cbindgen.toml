@@ -1,0 +1,17 @@
+language = "C"
+include_guard = "ACEGF_H"
+style = "both"
+tab_width = 4
+
+[defines]
+"target_arch = wasm32" = ""
+
+[export]
+exclude = [
+    "VERSION",
+    "ED25519_INFO",
+    "X25519_INFO",
+    "SECP256K1_INFO",
+    "SEAL32_SALT",
+    "SYSTEM_PROGRAM_ID",
+]

@@ -1,0 +1,264 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Preamble SetupA (High Compatibility) ---
+\usepackage[utf8]{inputenc} % Standard input encoding
+\usepackage[T1]{fontenc}    % Standard font encoding
+\usepackage{textcomp}       % Needed for certain symbols under T1 encoding
+
+\usepackage{amsmath, amssymb}
+\usepackage{amsthm}
+\usepackage{booktabs} % For professional tables
+\usepackage{graphicx}
+\usepackage{enumitem} % For list control
+% \usepackage{fullpage} % Included as it's standard and not conflicting with single column.
+\usepackage{courier} % Keep courier for code consistency
+
+% Define custom color for links (optional but nice)
+\usepackage{xcolor}
+\definecolor{darkblue}{rgb}{0.0, 0.0, 0.5}
+
+% Must be the last package loaded
+\usepackage[
+    colorlinks=true,
+    linkcolor=darkblue,
+    citecolor=darkblue,
+    filecolor=darkblue,
+    urlcolor=darkblue
+]{hyperref}
+
+% --- Title and Author Information ---
+\title{ACE-GF: A Single-Root, Multi-Curve, Context-Isolated, PQC-Pluggable Cryptographic Identity Primitive with Stateless Secret Rotation}
+
+\author{
+    \textbf{ACE-GF Labs} \\
+    \vspace{0.5em}
+    \small \texttt{jason@acegf.com} \\
+    \small \emph{Montreal, Canada}
+}
+
+\date{November 2025} % Update this date as needed
+
+% --- Document Start ---
+\begin{document}
+
+\maketitle
+
+% --- Abstract ---
+\begin{abstract}
+Cryptographic identity anchors modern decentralized systems, yet current standards like BIP-39 and BIP-32 are structurally insufficient for the demands of multi-curve, multi-domain, and post-quantum (PQC) environments. These legacy schemes rely on a monolithic identity root with no inherent context isolation, algorithm agility, or secure secret rotation. This paper introduces \textbf{ACE-GF}, a single-root, multi-curve, context-isolated, PQC-pluggable cryptographic identity primitive. ACE-GF defines a new architectural foundation where identity is derived deterministically but with cryptographically enforced separation across diverse contexts (e.g., blockchain, E2EE, KMS, IoT). It achieves strong security invariants---such as zero-linkability, multi-curve independence, and resistance to cross-context correlation---while offering stateless secret rotation that preserves long-term identity continuity without requiring asset migration. ACE-GF is proposed as an infrastructure-level upgrade to deterministic identity, establishing a durable and algorithm-agnostic root of trust suitable for the next decade of distributed systems, AI agents, and PQC migration.
+\end{abstract}
+
+% --- Main Content ---
+
+\section{Introduction}
+Cryptographic identity has become the foundational layer of modern decentralized systems, yet the design principles that govern today's wallet key hierarchies remain anchored in architectures from a decade ago. The widely deployed BIP-39 mnemonic scheme and the BIP-32 hierarchical derivation model were originally introduced as pragmatic conveniences rather than carefully constructed cryptographic primitives. They were never meant to serve as long-term, multi-curve, or post-quantum-ready identity roots; nevertheless, they have become the de facto global infrastructure by historical inertia.
+
+Despite the evolution of the ecosystem---from single-chain environments to multi-chain and multi-curve networks---the identity root has remained largely unchanged. BIP-39 mnemonics offer no inherent encryption, no mechanism for secure rotation, and no way to isolate contexts or application domains. A mnemonic phrase, once compromised, exposes the entire lifetime of derived keys across all supported chains. It is a single point of failure with no built-in boundary, no extensibility, and no remediation path beyond complete abandonment of the identity.
+
+BIP-32, in turn, provides hierarchical key derivation but strictly within a single-curve construction. As a result, multi-curve ecosystems---such as those combining secp256k1, ed25519, sr25519, and emerging post-quantum primitives---must rely on ad-hoc mechanisms, curve-specific derivation rules, or entirely separate identity roots. This fragmentation introduces attack surfaces and usability costs not addressed by any existing standards. More critically, neither BIP-39 nor BIP-32 offers a non-invasive way to integrate post-quantum (PQC) key systems into an existing identity root. The arrival of PQC does not merely require new key types; it demands an identity root that can incorporate, swap, or extend to new cryptographic families without breaking determinism or user continuity.
+
+In parallel, application demands have outgrown the legacy identity model. Cross-chain asset management, multi-tenant enterprise signing systems, IoT device fleets, and stateless serverless architectures all require:
+\begin{itemize}[noitemsep, nolistsep]
+    \item a single cryptographic root capable of deriving arbitrarily many independent identities;
+    \item isolation between application contexts so that compromise in one domain does not propagate to others;
+    \item deterministic behavior that can be externally verified without exposing internal secrets;
+    \item and the ability to rotate passphrases or user-facing secrets without altering the underlying core entropy.
+\end{itemize}
+The absence of such properties in today's schemes reveals a gap: although upper-layer systems have grown more sophisticated, the underlying identity primitive has remained static, unscalable, and unsuitable for a future defined by multi-curve and post-quantum demands.
+
+This paper introduces \textbf{ACE-GF} (Multi-Stream Context-Isolated Key Derivation Function), a single-root, multi-curve, context-isolated, PQC-pluggable cryptographic identity primitive with stateless secret rotation. Rather than extending BIP-39/BIP-32 or proposing an incremental improvement, ACE-GF defines a new architectural foundation for identity generation and management. Its goal is not to replace existing signature schemes or blockchains, but to provide the infrastructure-level upgrade that modern applications require: deterministic yet isolated identity streams, cross-curve compatibility, forward-compatible PQC integration, and secure, non-destructive secret rotation---while exposing only observable behavior and no internal state.
+
+ACE-GF is designed to serve as the missing cryptographic layer between raw entropy and the diverse set of asymmetric primitives used across blockchain, decentralized identity (DID), enterprise signing systems, and future PQC environments. It aims to redefine how identity should be rooted, extended, and verified in the next decade of cryptographic systems.
+
+\section{Background and Motivation}
+
+The modern notion of a ``cryptographic identity'' is almost always implemented as a seed plus a derivation scheme. In practice, however, the dominant schemes---BIP-32/BIP-39, SLIP-10, generic HKDF-based constructions, secure-messaging identity stacks, cloud KMS products, and IoT credential systems---were designed for much narrower threat models and deployment environments than those emerging today: AI agents, autonomous robots, multi-chain Web3 wallets, ubiquitous end-to-end encryption (E2EE), enterprise-scale KMS, and impending post-quantum cryptography (PQC) migration.
+This section reviews these existing approaches and explains why they are structurally insufficient as a general-purpose identity root for the next generation of systems.
+
+\subsection{Legacy Wallet Standards: BIP-39, BIP-32, SLIP-10}
+BIP-39 introduced mnemonic phrases as a human-memorable encoding of entropy for cryptocurrency wallets. A BIP-39 mnemonic is transformed into a ``seed,'' from which BIP-32 hierarchical deterministic (HD) keys are derived. While successful as a usability patch, BIP-39 has several structural limitations:
+\begin{itemize}[noitemsep, nolistsep]
+    \item It was never designed as a rigorous identity primitive; it is effectively a UX layer on top of a conventional seed.
+    \item In most real-world deployments, a single mnemonic acts as a single point of catastrophic failure: if the mnemonic leaks once, all funds and identities bound to that seed are permanently compromised.
+    \item The optional BIP-39 passphrase is global to the seed: it is not per-context, not easily rotated in a compartmentalized way, and is almost never exposed as a first-class security control to users.
+    \item BIP-39 seeds are not curve-aware or algorithm-agile: mapping one root into multiple curves and schemes requires ad-hoc conventions and parallel derivation trees.
+\end{itemize}
+BIP-32 specifies an HD key derivation scheme for a single elliptic curve (originally secp256k1). It introduced hierarchical child key derivation, which solved key backup and multi-account management for a single asset family. However:
+\begin{itemize}[noitemsep, nolistsep]
+    \item The derivation graph is tightly coupled to one curve and one key type; extending to multiple curves typically requires separate parallel derivation standards (e.g. SLIP-10 style).
+    \item BIP-32 child derivation does not intrinsically encode semantic context (e.g., ``this branch is for messaging,'' ``this branch is for AI agent N's signing key'') in a way that is portable and self-describing across systems; semantics are external conventions.
+    \item Rotating a high-level secret (e.g., changing a passphrase) while preserving selected sub-trees is not a first-class operation; any rotation is effectively ``all or nothing.''
+\end{itemize}
+SLIP-10 extends HD derivation to multiple curves (including ed25519) by defining curve-specific derivation rules. This partially addresses the ``multi-curve'' problem, but it does not change the fundamental model. For AI agents, robots, and complex Web3 deployments, this ``one mnemonic $\to$ one opaque seed $\to$ multiple ad-hoc trees'' model is already strained.
+
+\subsection{Emerging Requirements: PQC and Context Isolation}
+Across many domains, the underlying requirements for identity are converging: single conceptual root, many isolated contexts; deterministic, stateless reconstruction; fine-grained secret rotation under a stable root; and multi-curve and PQC-pluggable identity. Current standards handle algorithm agility at the protocol or key-object level, not at the identity-root level. This makes synchronized migration across heterogeneous ecosystems unnecessarily complex.
+
+\subsection{Problem Statement}
+Existing primitives and standards were designed around single-purpose ecosystems. None of these, by construction, provide: a single sealed root that can safely drive multi-curve, multi-algorithm, multi-context identities, with cryptographically enforced context isolation, stateless secret rotation that preserves chosen sub-identities, and PQC-pluggable algorithm agility. The rest of this work introduces ACE-GF as a new primitive that explicitly targets this gap.
+
+\section{Threat Model}
+ACE-GF is designed as a long-lived, single-root cryptographic identity primitive intended to operate across heterogeneous curves, protocols, and post-quantum (PQ) algorithms. This section formalizes the adversarial capabilities considered in the design.
+
+\subsection{Adversary Types}
+\begin{enumerate}
+    \item \textbf{Passive Observers:} An adversary can record all public keys derived across multiple curves and observe usage patterns. Goal: infer the root entropy or predict future keys. ACE-GF must prevent cross-curve correlation and longitudinal inference.
+    \item \textbf{Active Attackers:} An active adversary can tamper with messages, attempt to induce incorrect curve/algorithm selection, or perform password-guessing attacks. ACE-GF must provide context isolation, password hardening, and stateless safety.
+    \item \textbf{Mnemonic Replacement / Substitution Attacks:} An attacker replaces a user's mnemonic with another syntactically valid mnemonic. ACE-GF must guarantee that the mnemonic alone is insufficient to impersonate the root (password required), and that replacement does not allow post-facto takeover or ``silent forking'' of identity.
+    \item \textbf{Cross-Curve and Side-Channel Correlation Attacks:} An adversary may attempt to correlate public keys across elliptic-curve families or infer entropy structure from incompatible mathematical groups. ACE-GF must ensure no shared algebraic structure between curves is exposed.
+    \item \textbf{Algorithm-Migration and Long-Term Cryptanalytic Risk:} The adversary is modeled as having future knowledge (post-break perspective) and eventually possessing the ability to break ECC. ACE-GF must guarantee non-intrusive algorithm replacement and compromise-resistance under partial breaks.
+\end{enumerate}
+\textbf{[Expand this section to provide deeper technical discussion on PQC and Cross-Curve Correlation threats.]}
+
+\subsection{Root Security Goals}
+To operate securely under the above attacker model, ACE-GF's root must satisfy four invariants: Long-term secrecy; Non-derivability (no derived output reveals $R$); Non-malleability; and \textbf{Context-strict isolation} (keys derived in one curve/context must not leak information about any other context).
+
+\section{Design Goals}
+ACE-GF is guided by core design goals that address the limitations of classical systems.
+
+\subsection{Single Root Identity}
+ACE-GF adopts a single, long-term root entropy $R$ as the universal cryptographic anchor. All keys are derived deterministically but isolation-preserving from this root, supporting identity consistency and operational simplicity.
+
+\subsection{Context Isolation}
+A fundamental requirement is that keys derived in one context must reveal no information about keys in any other context. ACE-GF enforces isolation by binding each derivation to a unique, unforgeable context descriptor, eliminating cross-context correlation. 
+
+\subsection{Multi-curve Independence}
+Each curve family (secp256k1, Ed25519, BLS12-381, PQC schemes) receives a mathematically independent stream. Leakage of one algorithm's derived keys does not weaken others, preserving deniability and unlinkability.
+
+\subsection{PQC Pluggable Algorithm Upgrades}
+ACE-GF is built as a pluggable, forward-compatible framework, allowing new derivation modules (e.g., PQC KEM, PQC signatures) to be added without breaking compatibility. The root entropy never needs replacement merely due to algorithm deprecation.
+
+\subsection{Stateless Secret Rotation}
+Rotation is implemented through reversible, zero-knowledge-style transformations on the root key space. Rotation is stateless and does not alter the underlying core entropy $R$, ensuring non-destructive secret rotation.
+
+\subsection{Zero-Linkability}
+Keys derived for different ecosystems, curves, contexts, or devices cannot be correlated by construction. Even with full visibility of all public keys, no observer can infer common ancestry.
+
+\section{ACE-GF Primitive}
+This section formalizes the ACE-GF primitive at a conceptual and algebraic level. The model is defined around three core elements: a single long-term root, a context-isolated derivation function, and an algorithm-agnostic multi-curve expansion structure.
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.95\columnwidth}{\centering
+    \vspace{0.2cm}
+    
+    \vspace{0.2cm}
+    \small \textbf{Figure 1:} The two-stage ACE-GF architecture. The initial sealing stage uses strong KDF (Argon2id) and AEAD to derive the immutable root $R$ (UUID) from the passphrase/mnemonic. The second stage uses HKDF with context-specific INFO strings to generate cryptographically isolated key streams.
+    \vspace{0.2cm}
+  }}
+\end{figure}
+
+\subsection{Root $R$: A Single Long-Term Identity Source}
+ACE-GF assumes that each entity possesses a single long-term root entropy $R$.
+\begin{itemize}[noitemsep, nolistsep]
+    \item $R$ is a high-entropy element drawn from a large randomness domain (e.g., a 128-bit or 256-bit UUID/seed).
+    \item $R$ is never used directly for authentication, encryption, or signing.
+    \item No derived output reveals information about $R$.
+\end{itemize}
+
+\subsection{Context-Derivation Function $F(R, C)$}
+All practical keys, seeds, or identity objects are produced from a derivation function $K_C = F(R, C)$, where $R$ is the long-term root and $C$ is the context descriptor.
+
+\textbf{Required abstract properties:}
+\begin{itemize}[noitemsep, nolistsep]
+    \item \textbf{One-wayness:} $K_C \ \not\Rightarrow\ R$. No feasible computation from any derived output yields information about $R$.
+    \item \textbf{Context-isolation:} For any distinct contexts $C_1 \neq C_2$, $K_{C_1} \ \bot\ K_{C_2}$, meaning that derived materials are mutually independent and non-correlatable.
+    \item \textbf{Unbounded namespace:} $C$ spans an extensible multidimensional space (algorithm, curve, purpose, versioning).
+    \item \textbf{Zero-linkability:} Public or private artifacts associated with different contexts do not leak structural relationships or a shared origin.
+\end{itemize}
+
+\subsection{Multi-Algorithm Slots}
+ACE-GF introduces the notion of algorithm slots, representing cryptographic algorithm families as dedicated subspaces of the context domain: $C = (C_{\text{algorithm}}, C_{\text{curve}}, C_{\text{purpose}}, \ldots)$. Because algorithms are encoded as context dimensions, ACE-GF supports adding new algorithms (including PQC) without modifying $R$.
+
+\subsection{Stateless Secret Transformation}
+ACE-GF models passphrases or device factors as a secondary transformation: $R' = G(R, P)$, where $P$ is user-supplied, mutable material, and $G$ is a one-way transformation producing a ``usage-state root'' $R'$.
+\textbf{[Expand this section to detail the abstract transformation $G$ and its benefits over traditional KDFs.]}
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.95\columnwidth}{\centering
+    \vspace{0.2cm}
+    
+    \vspace{0.2cm}
+    \small \textbf{Figure 2:} Stateless Secret Rotation. The user can change the protective secret $P$ to $P'$ resulting in a new usage-state root $R''$. However, the core identity root $R$ remains unchanged, ensuring all derived keys and identities (even those derived years later) are still anchored to the same stable source.
+    \vspace{0.2cm}
+  }}
+\end{figure}
+
+\section{Stateless Secret Rotation}
+ACE-GF enables a rotation model in which the protective secret associated with an identity may change freely while the underlying identity root $R$ remains constant. Rotation does not rely on historical information, does not require knowledge of prior secrets, and does not impose ordering or linkability among different protective states.
+
+\subsection{Behavioral Properties}
+\begin{itemize}[noitemsep, nolistsep]
+    \item \textbf{Stability of the Identity Root:} Across any number of rotations, $R$ remains unchanged.
+    \item \textbf{Rotation Independent of Previous Secrets:} A new protective secret may be introduced without referencing any prior secret.
+    \item \textbf{Persistence of Legacy Mnemonic--Passphrase Pairs:} Any mnemonic--passphrase pair that has ever been valid for accessing the identity root continues to be valid indefinitely. The introduction of additional pairs does not alter, weaken, or override existing ones.
+    \item \textbf{Absence of Linkability Across Rotated States:} Distinct protective states cannot be correlated. Observers cannot determine whether two states correspond to the same identity or which one came first.
+\end{itemize}
+This property eliminates historical attack surfaces and allows for unlimited frequency and flexibility of rotation in offline and serverless environments.
+\textbf{[Expand this section to include a detailed comparison with key rewrapping and stateful rotation schemes.]}
+
+\section{Security Properties}
+The following properties arise from the ACE-GF root-and-context architecture:
+
+\begin{itemize}[noitemsep, nolistsep]
+    \item \textbf{Context Isolation:} Knowledge of one derived secret does not allow prediction, reconstruction, or correlation of any other derived secret.
+    \item \textbf{One-Way Expansion:} The mapping $R \;\mapsto\; F(R, C)$ is strictly one-way, ensuring that the derived outputs cannot collapse or compress into the input root.
+    \item \textbf{Multi-Curve Unlinkability:} Keys derived under different curves cannot be linked to each other solely from their public outputs, and a compromise of one algorithm family does not propagate to any other family.
+    \item \textbf{Forward and Backward Secrecy Under Rotation:} Knowledge of any prior rotation state does not allow predicting secrets produced after the rotation (Forward Secrecy). Knowledge of any post-rotation state does not allow reconstructing secrets generated before the rotation (Backward Secrecy).
+    \item \textbf{PQC Algorithm Agility:} The identity root $R$ remains stable while new PQC algorithms are introduced as independent expansion slots.
+\end{itemize}
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.95\columnwidth}{\centering
+    \vspace{0.2cm}
+    
+    \vspace{0.2cm}
+    \small \textbf{Figure 3:} Context Isolation. A single immutable root $R$ is expanded via the function $F$ with distinct context descriptors $C_A$ (e.g., EVM Wallet) and $C_B$ (e.g., E2EE Messaging). The resulting keys, $K_{C_A}$ and $K_{C_B}$, are cryptographically unlinkable, ensuring compromise of the wallet does not affect the messaging identity.
+    \vspace{0.2cm}
+  }}
+\end{figure}
+
+\section{Applications}
+ACE-GF's architectural properties provide structurally significant benefits across diverse domains:
+
+\subsection{Crypto Wallets}
+ACE-GF resolves the long-standing mismatch between single mnemonic roots and multi-chain operational reality by enabling cross-chain independence, multi-curve compatibility (including PQC), and non-migratory rotation.
+
+\subsection{Enterprise Key Management (KMS)}
+ACE-GF provides stateless secret rotation, multi-context key zones (representing departments or applications as isolated contexts), and long-term identity stability, reducing operational overhead and simplifying compliance boundaries.
+\textbf{[Expand this section with a specific scenario of enterprise multi-tenant key management and audit.]}
+
+\subsection{Secure Messaging / E2EE}
+The primitive resolves the tension between a stable long-term identity (for trust establishment) and ephemeral, unlinkable conversation keys (for forward secrecy) by supporting deterministically derived, cryptographically unlinkable conversation contexts anchored to the persistent root.
+\textbf{[Expand this section with details on X3DH/Signal Protocol integration and key derivation simplicity.]}
+
+\subsection{IoT / Robotics}
+ACE-GF enables a single sealed identity root per device, partitioned contexts for authentication/telemetry, and transparent PQC algorithm agility without hardware replacement.
+
+\subsection{AI Agents Identity}
+ACE-GF establishes a principled cryptographic foundation for autonomous agents, supporting persistent identity across multiple environments and isolated key material for each task or delegated action, crucial for agent governance and accountability.
+
+\section{Related Work}
+This section contrasts ACE-GF with major families of identity systems:
+\begin{itemize}[noitemsep, nolistsep]
+    \item \textbf{BIP-32 / BIP-39 Hierarchical Wallets:} ACE-GF departs by defining a curve-agnostic identity root whose derived outputs remain mutually unlinkable and by implementing stateless secret rotation.
+    \item \textbf{HKDF and Related KDF Families:} ACE-GF extends HKDF's domain-isolated derivation by introducing a permanent root identity, a multi-context/multi-curve model, and a rotation-without-rollback guarantee.
+    \item \textbf{WebAuthn and Hardware-Bound Identity:} These systems are device-resident and non-exportable; ACE-GF targets portable, deterministic, and curve-agnostic identity roots that can migrate across devices.
+    \item \textbf{Signal Identity Keys:} ACE-GF generalizes the idea of a persistent identity key into a curve-independent, multi-context, multi-algorithm root, without embedding messaging-specific protocol semantics.
+\end{itemize}
+ACE-GF is a general-purpose identity foundation that can be embedded beneath these systems to provide the structural properties that existing primitives do not directly offer.
+
+\section{Limitations and Future Work}
+\subsection{Current Limitations}
+The current work has several limitations: 1) Dependence on a single long-term root (it reorganizes but does not eliminate single-root risk); 2) Usability and mental model constraints (no empirical analysis on user understanding of stateless rotation); 3) PQC Integration is architectural, not instantiated (no concrete PQC schemes mandated or analyzed); 4) Lack of formal security proofs (security analysis is architectural and qualitative, not a full formal proof).
+
+\subsection{Future Work}
+Future work includes: 1) Formal Definitions and Security Proofs (defining precise security games for context isolation and rotation); 2) PQC Instantiations and Hybrid Designs (selecting and analyzing specific PQC schemes); 3) Threshold, Multi-Party, and Organizational Roots (addressing single-root dependency via quorum control); 4) Usability Studies and Reference UX Patterns (validating the human side of stateless rotation).
+
+\section{Conclusion}
+This work introduced ACE-GF, an abstract cryptographic primitive for constructing a single, durable, multi-algorithm, context-isolated root of identity. The model emphasizes: a stable identity root across cryptographic eras; context isolation as a first-class property; and stateless secret rotation that prevents linkability across operational epochs. As conventional identity-root designs increasingly fall short of the demands of multi-curve, PQC-ready ecosystems, ACE-GF is proposed as one possible direction toward a unified identity standard, offering a shared structural basis for systems that require deterministic identity, context separation, and long-term survivability.
+
+% --- References ---
+\bibliographystyle{plain}
+\bibliography{references} % Create a file named 'references.bib'
+\end{document}
