@@ -2457,6 +2457,7 @@ dependencies = [
 [[package]]
 name = "zk-ace"
 version = "0.4.0"
+source = "git+https://github.com/acechain-io/zk-ace.git#e118ade564eebcf200a69dd2ce4175a5aa7784f8"
 dependencies = [
  "bincode",
  "bytemuck",

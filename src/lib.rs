@@ -9,6 +9,9 @@ pub mod signer;
 pub mod utils;
 pub mod vadar;
 
+/// Canonical mnemonic + passphrase test wallet and golden outputs.
+pub mod test_vectors;
+
 #[cfg(feature = "zk")]
 pub mod zk;
 

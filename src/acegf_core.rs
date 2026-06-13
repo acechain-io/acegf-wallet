@@ -1444,9 +1444,7 @@ mod tests {
 
     #[test]
     fn test_decode_mnemonic_to_sealed_valid() {
-        // 24-word mnemonic = 32 bytes entropy
-        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-        let result = ACEGFCore::decode_mnemonic_to_sealed(mnemonic);
+        let result = ACEGFCore::decode_mnemonic_to_sealed(crate::test_vectors::BIP39_ZERO_ENTROPY_MNEMONIC);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 32);
     }
@@ -1808,26 +1806,24 @@ mod tests {
 
     #[test]
     fn test_view_specific_wallet() {
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        let passphrase = "test_passphrase_do_not_use";
-        match ACEGFCore::view_wallet_internal(mnemonic, passphrase, None) {
+        use crate::test_vectors::{BITCOIN_ADDRESS, EVM_ADDRESS, MNEMONIC, PASSPHRASE, SOLANA_ADDRESS, XID};
+        match ACEGFCore::view_wallet_internal(MNEMONIC, PASSPHRASE, None) {
             Ok(entity) => {
-                println!("XID:    {}", entity.xid);
-                println!("EVM:    {}", entity.evm_address);
-                println!("Solana: {}", entity.solana_address);
-                println!("BTC:    {}", entity.bitcoin_address);
+                assert_eq!(entity.xid, XID);
+                assert_eq!(entity.evm_address, EVM_ADDRESS);
+                assert_eq!(entity.solana_address, SOLANA_ADDRESS);
+                assert_eq!(entity.bitcoin_address, BITCOIN_ADDRESS);
             }
-            Err(e) => println!("Error: {:?}", e),
+            Err(e) => panic!("canonical wallet must open: {:?}", e),
         }
     }
 
     #[test]
     fn test_xid_vs_idcom() {
         use sha3::{Digest, Sha3_256};
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        let passphrase = "test_passphrase_do_not_use";
+        use crate::test_vectors::{MNEMONIC, PASSPHRASE};
 
-        let sealed = ACEGFCore::decode_mnemonic_to_sealed(mnemonic).unwrap();
+        let sealed = ACEGFCore::decode_mnemonic_to_sealed(MNEMONIC).unwrap();
         println!("sealed hex: {}", hex::encode(sealed));
         
         // Current: XID from sealed
@@ -1836,7 +1832,7 @@ mod tests {
 
         // Alternative: XID from unsealed material
         use crate::utils::passphrase_sealing_util::PassphraseSealingUtil;
-        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, passphrase.as_bytes()).unwrap();
+        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, PASSPHRASE.as_bytes()).unwrap();
         let mut hasher = Sha3_256::new();
         hasher.update(&*material);
         hasher.update(b"acegf:xid");
@@ -1857,9 +1853,8 @@ mod tests {
     #[cfg(feature = "zk")]
     #[test]
     fn test_identity_commitment() {
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        let passphrase = "test_passphrase_do_not_use";
-        match crate::hfi_pay::derive_binding_metadata(mnemonic, passphrase, 0) {
+        use crate::test_vectors::{MNEMONIC, PASSPHRASE};
+        match crate::hfi_pay::derive_binding_metadata(MNEMONIC, PASSPHRASE, 0) {
             Ok(meta) => {
                 println!("identity_commitment: {}", meta.identity_commitment_hex);
                 println!("claim_binding_handle: {}", meta.claim_binding_handle_hex);
@@ -1870,19 +1865,18 @@ mod tests {
 
     #[test]
     fn test_xid_empty_passphrase() {
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        // XID only depends on mnemonic, not passphrase — just confirming
-        let sealed = ACEGFCore::decode_mnemonic_to_sealed(mnemonic).unwrap();
+        use crate::test_vectors::{MNEMONIC, PASSPHRASE, XID};
+        let sealed = ACEGFCore::decode_mnemonic_to_sealed(MNEMONIC).unwrap();
         let xid = ACEGFCore::compute_xid(&sealed);
-        println!("XID (any passphrase): {}", xid);
-        
+        assert_eq!(xid, XID);
+
         // Try view with empty passphrase to see EVM
-        match ACEGFCore::view_wallet_internal(mnemonic, "", None) {
+        match ACEGFCore::view_wallet_internal(MNEMONIC, "", None) {
             Ok(e) => println!("EVM (empty pass): {}", e.evm_address),
             Err(e) => println!("Error empty pass: {:?}", e),
         }
         // Try with secondary passphrase
-        match ACEGFCore::view_wallet_internal(mnemonic, "test_passphrase_do_not_use", Some("")) {
+        match ACEGFCore::view_wallet_internal(MNEMONIC, PASSPHRASE, Some("")) {
             Ok(e) => println!("EVM (with secondary empty): {}", e.evm_address),
             Err(e) => println!("Error: {:?}", e),
         }
@@ -1892,10 +1886,9 @@ mod tests {
     fn test_xid_variants() {
         use sha3::{Digest, Sha3_256};
         use crate::utils::passphrase_sealing_util::PassphraseSealingUtil;
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        let passphrase = "test_passphrase_do_not_use";
-        let sealed = ACEGFCore::decode_mnemonic_to_sealed(mnemonic).unwrap();
-        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, passphrase.as_bytes()).unwrap();
+        use crate::test_vectors::{MNEMONIC, PASSPHRASE};
+        let sealed = ACEGFCore::decode_mnemonic_to_sealed(MNEMONIC).unwrap();
+        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, PASSPHRASE.as_bytes()).unwrap();
 
         let target = "380802043b3ff7126054883edd31dc12ca7c497da876808d87255879fa83b45c";
 
@@ -1927,11 +1920,10 @@ mod tests {
         use sha3::{Digest, Sha3_256};
         use crate::utils::passphrase_sealing_util::PassphraseSealingUtil;
         use crate::pqclean_ffi::MlDsa44;
-        let mnemonic = "express number monitor cigar clown fat ethics emotion claw busy alien begin hotel scare avocado action alley lucky tunnel grape token aim usual increase";
-        let passphrase = "test_passphrase_do_not_use";
-        let sealed = ACEGFCore::decode_mnemonic_to_sealed(mnemonic).unwrap();
-        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, passphrase.as_bytes()).unwrap();
-        let seeds = ACEGFCore::derive_seeds_from_sealed_passphrase(&sealed, passphrase, None).unwrap();
+        use crate::test_vectors::{MNEMONIC, PASSPHRASE};
+        let sealed = ACEGFCore::decode_mnemonic_to_sealed(MNEMONIC).unwrap();
+        let material = PassphraseSealingUtil::unseal_identity_material(&sealed, PASSPHRASE.as_bytes()).unwrap();
+        let seeds = ACEGFCore::derive_seeds_from_sealed_passphrase(&sealed, PASSPHRASE, None).unwrap();
         let target = "380802043b3ff7126054883edd31dc12ca7c497da876808d87255879fa83b45c";
 
         let sha256_sealed = hex::encode(Sha256::digest(sealed));
