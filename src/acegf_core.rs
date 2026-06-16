@@ -159,7 +159,7 @@ impl ACEGFCore {
             .map_err(|_| AcegfError::AddressDerivationFailed)?;
         let polkadot_address = Self::derive_polkadot_address(&seeds.ed25519_polkadot)
             .map_err(|_| AcegfError::AddressDerivationFailed)?;
-        let xidentity = Self::derive_x25519_public(&seeds.x25519)
+        let x25519 = Self::derive_x25519_public(&seeds.x25519)
             .map_err(|_| AcegfError::AddressDerivationFailed)?;
         // PQC address is allowed to fail gracefully (returns message for unsupported platforms)
         let xaddress = Self::derive_pqc_address(&seeds.ml_dsa_44);
@@ -175,7 +175,7 @@ impl ACEGFCore {
             tron_address,
             polkadot_address,
             xaddress,
-            xidentity,
+            x25519,
             xkem,
             ..Default::default()
         };
@@ -1673,7 +1673,7 @@ mod tests {
             entity_personal.polkadot_address,
             entity_vault.polkadot_address
         );
-        assert_ne!(entity_personal.xidentity, entity_vault.xidentity);
+        assert_ne!(entity_personal.x25519, entity_vault.x25519);
     }
 
     // --- view_wallet tests (require full wallet generation) ---

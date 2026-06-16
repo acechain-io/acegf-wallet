@@ -114,14 +114,14 @@ pub struct HybridEncryptedV2Payload {
     /// 16-byte public nonce, Base64. Input to the HKDF salt. Callers that
     /// need to reproduce a wrap must store this alongside the envelope.
     pub nonce_b64: String,
-    /// Sender's long-term X25519 public key (xidentity), Base64. Used by
+    /// Sender's long-term X25519 public key (x25519), Base64. Used by
     /// the recipient to optionally authenticate the wrap (the sender is
     /// the only party that can compute the deterministic derivation).
-    pub sender_xidentity_b64: String,
-    /// Recipient's long-term X25519 public key (xidentity), Base64.
+    pub sender_x25519_b64: String,
+    /// Recipient's long-term X25519 public key (x25519), Base64.
     /// Echoed in the envelope so recipients can verify "this wrap is
     /// intended for me" before attempting decryption.
-    pub recipient_xidentity_b64: String,
+    pub recipient_x25519_b64: String,
     /// SHA-256 hash of the recipient's ML-KEM-768 encaps key, Base64.
     /// Stored (instead of the full 1184-byte xkem) to let recipients /
     /// senders detect xkem rotation without bloating the envelope.
@@ -388,27 +388,27 @@ impl ACEGF {
         Ok(signature)
     }
 
-    // 2) Encrypt to an xidentity holder; returns
+    // 2) Encrypt to an x25519 holder; returns
     // (ephemeral_pub_b64, encrypted_aes_key_b64, iv_b64, encrypted_data)
-    pub fn encrypt_for_xidentity(
-        recipient_xidentity_b64: &str,
+    pub fn encrypt_for_x25519(
+        recipient_x25519_b64: &str,
         plaintext: &[u8],
     ) -> Result<(String, String, String, Vec<u8>), Box<dyn Error>> {
         use base64ct::{Base64, Encoding};
         use rand::RngCore;
         use sha2::{Digest, Sha256};
 
-        // 1) Recipient xidentity pubkey
-        let recipient_pub_bytes = Base64::decode_vec(recipient_xidentity_b64).map_err(|e| {
+        // 1) Recipient x25519 pubkey
+        let recipient_pub_bytes = Base64::decode_vec(recipient_x25519_b64).map_err(|e| {
             Box::new(CryptoError::DecodingError(format!(
-                "Base64 decode xidentity failed: {}",
+                "Base64 decode x25519 failed: {}",
                 e
             ))) as Box<dyn Error>
         })?;
 
         if recipient_pub_bytes.len() != 32 {
             return Err(Box::new(CryptoError::DecodingError(
-                "xidentity must be 32 bytes".to_string(),
+                "x25519 must be 32 bytes".to_string(),
             )) as Box<dyn Error>);
         }
 
@@ -566,18 +566,18 @@ impl ACEGF {
     // ──────────────────────────────────────────────────────────────
     // ML-KEM-768 (FIPS 203) — post-quantum key encapsulation
     //
-    // The KEM API is intentionally shaped to mirror the X25519 / xidentity
+    // The KEM API is intentionally shaped to mirror the X25519 / x25519
     // surface above: all inputs/outputs are Base64 strings, errors flow
     // through `CryptoError`, and the recipient identity argument is always
     // a `*_b64: &str`. This keeps the KEM substitutable with (or composable
-    // alongside) the classical xidentity path at every integration layer.
+    // alongside) the classical x25519 path at every integration layer.
     // ──────────────────────────────────────────────────────────────
 
     /// Encapsulate a fresh 32-byte shared secret against a recipient's
     /// published ML-KEM-768 encapsulation key (`xkem`, Base64-encoded,
     /// 1184 raw bytes).
     ///
-    /// This is the post-quantum analogue of `encrypt_for_xidentity`.
+    /// This is the post-quantum analogue of `encrypt_for_x25519`.
     /// Anyone holding the recipient's `xkem` can call this function
     /// without knowing the recipient's mnemonic.
     ///
@@ -687,7 +687,7 @@ impl ACEGF {
     // ──────────────────────────────────────────────────────────────────────
     // Hybrid X25519 + ML-KEM-768 data encryption — the NEW DEFAULT.
     //
-    // These methods fully replace the legacy `encrypt_for_xidentity` /
+    // These methods fully replace the legacy `encrypt_for_x25519` /
     // `decrypt_internal` pair at every call site that is being migrated for
     // post-quantum safety. The legacy pair is left in place, byte-identical,
     // so existing ciphertexts remain readable forever.
@@ -744,8 +744,8 @@ impl ACEGF {
     ///
     /// The caller supplies **both** halves of the recipient's identity:
     ///
-    /// * `recipient_xidentity_b64` — the long-term X25519 public key (same
-    ///   value that [`ACEGF::encrypt_for_xidentity`] accepted)
+    /// * `recipient_x25519_b64` — the long-term X25519 public key (same
+    ///   value that [`ACEGF::encrypt_for_x25519`] accepted)
     /// * `recipient_xkem_b64` — the long-term ML-KEM-768 encapsulation key
     ///   (the new `xkem` field populated on [`CryptoEntity`] /
     ///   [`crate::WalletPublicView`])
@@ -755,7 +755,7 @@ impl ACEGF {
     /// either (a) re-generate the recipient's wallet view via the current
     /// library (which will populate `xkem` deterministically from the same
     /// mnemonic) or (b) explicitly and consciously use the legacy
-    /// [`ACEGF::encrypt_for_xidentity`] method.
+    /// [`ACEGF::encrypt_for_x25519`] method.
     ///
     /// Returns a [`HybridEncryptedPayload`] ready for JSON serialization,
     /// wire transfer, or storage in any immutable medium (IPFS / Arweave /
@@ -778,7 +778,7 @@ impl ACEGF {
     ///   to `ciphertext`; HKDF transcript binding detects any tamper to
     ///   `ephemeral_x25519_pub_b64`, `kem_ciphertext_b64`, or `v`.
     pub fn encrypt_for_recipient_pq(
-        recipient_xidentity_b64: &str,
+        recipient_x25519_b64: &str,
         recipient_xkem_b64: &str,
         plaintext: &[u8],
     ) -> Result<HybridEncryptedPayload, Box<dyn Error>> {
@@ -787,16 +787,16 @@ impl ACEGF {
 
         use crate::pqclean_ffi::MlKem768;
 
-        // 1. Decode recipient's X25519 public key (xidentity).
-        let recipient_x_bytes = Base64::decode_vec(recipient_xidentity_b64).map_err(|e| {
+        // 1. Decode recipient's X25519 public key (x25519).
+        let recipient_x_bytes = Base64::decode_vec(recipient_x25519_b64).map_err(|e| {
             Box::new(CryptoError::DecodingError(format!(
-                "Base64 decode xidentity failed: {}",
+                "Base64 decode x25519 failed: {}",
                 e
             ))) as Box<dyn Error>
         })?;
         if recipient_x_bytes.len() != 32 {
             return Err(Box::new(CryptoError::DecodingError(
-                "xidentity must be 32 bytes".to_string(),
+                "x25519 must be 32 bytes".to_string(),
             )) as Box<dyn Error>);
         }
         let recipient_x_pub = XPublic::from(*array_ref![recipient_x_bytes, 0, 32]);
@@ -1085,7 +1085,7 @@ impl ACEGF {
     // ```
     // wrap_master   = HKDF(IKM = seeds.x25519 || seeds.ml_kem_768,
     //                       salt = [], info = "wrap-master-v1", L = 32)
-    // salt          = nonce(16) || recipient_xidentity(32)
+    // salt          = nonce(16) || recipient_x25519(32)
     //                 || SHA256(recipient_xkem)(32)
     // seed64        = HKDF(IKM = wrap_master, salt = salt,
     //                       info = "yallet-wrap-seed-v2", L = 64)
@@ -1093,7 +1093,7 @@ impl ACEGF {
     // eph_x_priv    = clamp(HKDF(seed64, "eph-x25519-v2", 32))
     // kem_rand      = HKDF(seed64, "ml-kem-rand-v2", 32)
     // wrap_iv       = HKDF(seed64, "wrap-iv-v2", 12)
-    // ss_x          = X25519(eph_x_priv, recipient_xidentity)
+    // ss_x          = X25519(eph_x_priv, recipient_x25519)
     // (ss_k, kem_ct)= ML-KEM-768.encaps_from_seed(recipient_xkem, kem_rand)
     // dk_key        = HKDF(IKM = ss_x || ss_k, salt = [],
     //                       info = "dk-wrap-v2", L = 32)
@@ -1132,13 +1132,13 @@ impl ACEGF {
     fn derive_v2_seed64(
         wrap_master: &[u8; 32],
         nonce: &[u8; 16],
-        recipient_xidentity: &[u8; 32],
+        recipient_x25519: &[u8; 32],
         recipient_xkem: &[u8],
     ) -> Result<Zeroizing<[u8; 64]>, String> {
         use hkdf::Hkdf;
         use sha2::{Digest, Sha256};
 
-        // salt = nonce || recipient_xidentity || SHA256(recipient_xkem)
+        // salt = nonce || recipient_x25519 || SHA256(recipient_xkem)
         let mut kem_hash = [0u8; 32];
         let mut hasher = Sha256::new();
         hasher.update(recipient_xkem);
@@ -1146,7 +1146,7 @@ impl ACEGF {
 
         let mut salt = [0u8; 16 + 32 + 32];
         salt[0..16].copy_from_slice(nonce);
-        salt[16..48].copy_from_slice(recipient_xidentity);
+        salt[16..48].copy_from_slice(recipient_x25519);
         salt[48..80].copy_from_slice(&kem_hash);
 
         let hk = Hkdf::<Sha256>::new(Some(&salt), wrap_master);
@@ -1200,7 +1200,7 @@ impl ACEGF {
     /// Arguments:
     /// * `mnemonic` / `passphrase` — sender's wallet, used to derive
     ///   `wrap_master`. The sender must be unlocked.
-    /// * `recipient_xidentity_b64` — recipient's X25519 public key (32 B).
+    /// * `recipient_x25519_b64` — recipient's X25519 public key (32 B).
     /// * `recipient_xkem_b64` — recipient's ML-KEM-768 encaps key (1184 B).
     /// * `nonce_opt` — optional 16-byte public nonce. If `None`, a fresh
     ///   random 16-byte nonce is generated. Callers that need to reproduce
@@ -1213,7 +1213,7 @@ impl ACEGF {
     pub fn encrypt_for_recipient_pq_v2(
         mnemonic: &str,
         passphrase: &str,
-        recipient_xidentity_b64: &str,
+        recipient_x25519_b64: &str,
         recipient_xkem_b64: &str,
         nonce_opt: Option<&[u8; 16]>,
         plaintext: &[u8],
@@ -1227,15 +1227,15 @@ impl ACEGF {
         use crate::pqclean_ffi::MlKem768;
 
         // 1. Decode recipient keys.
-        let recipient_x_bytes = Base64::decode_vec(recipient_xidentity_b64).map_err(|e| {
+        let recipient_x_bytes = Base64::decode_vec(recipient_x25519_b64).map_err(|e| {
             Box::new(CryptoError::DecodingError(format!(
-                "Base64 decode recipient xidentity failed: {}",
+                "Base64 decode recipient x25519 failed: {}",
                 e
             ))) as Box<dyn Error>
         })?;
         if recipient_x_bytes.len() != 32 {
             return Err(Box::new(CryptoError::DecodingError(
-                "recipient xidentity must be 32 bytes".to_string(),
+                "recipient x25519 must be 32 bytes".to_string(),
             )) as Box<dyn Error>);
         }
         let recipient_x_arr = *array_ref![recipient_x_bytes, 0, 32];
@@ -1257,7 +1257,7 @@ impl ACEGF {
         let mut recipient_kem_arr = [0u8; MlKem768::EK_BYTES];
         recipient_kem_arr.copy_from_slice(&recipient_kem_bytes);
 
-        // 2. Unseal sender seeds → wrap_master + sender xidentity.
+        // 2. Unseal sender seeds → wrap_master + sender x25519.
         let mut seeds = ACEGFCore::unseal_to_seeds(mnemonic, passphrase, None).map_err(|e| {
             Box::new(CryptoError::InternalError(format!(
                 "Unseal failed: {:?}",
@@ -1268,7 +1268,7 @@ impl ACEGF {
             Box::new(CryptoError::InternalError(e)) as Box<dyn Error>
         })?;
 
-        // Sender's long-term X25519 public key (xidentity). Same derivation
+        // Sender's long-term X25519 public key (x25519). Same derivation
         // used by `generate_crypto_entity` — clamp + scalar-mult base point.
         let mut sender_x_raw = **&seeds.x25519;
         sender_x_raw[0] &= 248;
@@ -1276,7 +1276,7 @@ impl ACEGF {
         sender_x_raw[31] |= 64;
         let sender_secret = StaticSecret::from(sender_x_raw);
         let sender_x_pub = XPublic::from(&sender_secret);
-        let sender_xidentity_b64 = Base64::encode_string(sender_x_pub.as_bytes());
+        let sender_x25519_b64 = Base64::encode_string(sender_x_pub.as_bytes());
         sender_x_raw.zeroize();
         // seeds will be cleared at the end
         let _ = sender_secret; // drop
@@ -1382,8 +1382,8 @@ impl ACEGF {
         Ok(HybridEncryptedV2Payload {
             v: HybridEncryptedV2Payload::VERSION.to_string(),
             nonce_b64: Base64::encode_string(&nonce),
-            sender_xidentity_b64,
-            recipient_xidentity_b64: recipient_xidentity_b64.to_string(),
+            sender_x25519_b64,
+            recipient_x25519_b64: recipient_x25519_b64.to_string(),
             recipient_xkem_hash_b64: Base64::encode_string(&kem_hash),
             wrap: HybridEncryptedV2Wrap {
                 eph_x25519_pub_b64: Base64::encode_string(eph_pub.as_bytes()),
@@ -1403,14 +1403,14 @@ impl ACEGF {
     /// Disaster-recovery helper (see architecture §5.4 / §15.3). The
     /// sender can always rebuild a byte-identical `wrap` object given:
     /// mnemonic + passphrase, the original 16-byte `nonce`, and the
-    /// recipient's xidentity + xkem. This does NOT touch the `blob`
+    /// recipient's x25519 + xkem. This does NOT touch the `blob`
     /// (which uses a random IV and is not deterministic); the caller is
     /// responsible for holding onto the original `blob` or re-encrypting
     /// the plaintext with the recovered DK.
     ///
     /// Arguments:
     /// * `mnemonic` / `passphrase` — sender's wallet.
-    /// * `recipient_xidentity_b64` — recipient's X25519 public key (32 B).
+    /// * `recipient_x25519_b64` — recipient's X25519 public key (32 B).
     /// * `recipient_xkem_b64` — recipient's ML-KEM-768 encaps key (1184 B).
     /// * `nonce_b64` — the original 16-byte Base64 nonce.
     ///
@@ -1421,7 +1421,7 @@ impl ACEGF {
     pub fn regenerate_wrap_v2(
         mnemonic: &str,
         passphrase: &str,
-        recipient_xidentity_b64: &str,
+        recipient_x25519_b64: &str,
         recipient_xkem_b64: &str,
         nonce_b64: &str,
     ) -> Result<HybridEncryptedV2Wrap, Box<dyn Error>> {
@@ -1432,15 +1432,15 @@ impl ACEGF {
         use crate::pqclean_ffi::MlKem768;
 
         // 1. Decode recipient keys.
-        let recipient_x_bytes = Base64::decode_vec(recipient_xidentity_b64).map_err(|e| {
+        let recipient_x_bytes = Base64::decode_vec(recipient_x25519_b64).map_err(|e| {
             Box::new(CryptoError::DecodingError(format!(
-                "Base64 decode recipient xidentity failed: {}",
+                "Base64 decode recipient x25519 failed: {}",
                 e
             ))) as Box<dyn Error>
         })?;
         if recipient_x_bytes.len() != 32 {
             return Err(Box::new(CryptoError::DecodingError(
-                "recipient xidentity must be 32 bytes".to_string(),
+                "recipient x25519 must be 32 bytes".to_string(),
             )) as Box<dyn Error>);
         }
         let recipient_x_arr = *array_ref![recipient_x_bytes, 0, 32];
@@ -1599,10 +1599,10 @@ impl ACEGF {
             let my_x_pub = XPublic::from(&x_secret_check);
             x_raw_check.zeroize();
 
-            let env_recipient_x = Base64::decode_vec(&payload.recipient_xidentity_b64)
+            let env_recipient_x = Base64::decode_vec(&payload.recipient_x25519_b64)
                 .map_err(|e| {
                     Box::new(CryptoError::DecodingError(format!(
-                        "Base64 decode recipient_xidentity failed: {}",
+                        "Base64 decode recipient_x25519 failed: {}",
                         e
                     ))) as Box<dyn Error>
                 })?;
@@ -1610,7 +1610,7 @@ impl ACEGF {
                 || env_recipient_x.as_slice() != my_x_pub.as_bytes().as_slice()
             {
                 return Err(Box::new(CryptoError::DecodingError(
-                    "recipient_xidentity binding mismatch: envelope was not addressed to this wallet"
+                    "recipient_x25519 binding mismatch: envelope was not addressed to this wallet"
                         .to_string(),
                 )) as Box<dyn Error>);
             }
@@ -1880,17 +1880,17 @@ impl ACEGF {
         Ok(signature)
     }
 
-    // Verify Ed25519 signature (xidentity)
+    // Verify Ed25519 signature (x25519)
     // Returns Result to properly propagate errors instead of silently failing
-    pub fn xidentity_verify_internal(
-        xidentity_b64: &str,
+    pub fn x25519_verify_internal(
+        x25519_b64: &str,
         message: &[u8],
         signature: &[u8],
     ) -> Result<bool, Box<dyn Error>> {
         use base64ct::{Base64, Encoding};
         use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-        let pub_bytes = Base64::decode_vec(xidentity_b64).map_err(|e| {
+        let pub_bytes = Base64::decode_vec(x25519_b64).map_err(|e| {
             Box::new(CryptoError::DecodingError(format!(
                 "Invalid base64 public key: {}",
                 e
@@ -1964,27 +1964,27 @@ mod tests {
     }
 
     #[test]
-    fn test_xidentity_verify_invalid_base64() {
+    fn test_x25519_verify_invalid_base64() {
         let result =
-            ACEGF::xidentity_verify_internal("not-valid-base64!!!", b"test message", &[0u8; 64]);
+            ACEGF::x25519_verify_internal("not-valid-base64!!!", b"test message", &[0u8; 64]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("base64") || err.to_string().contains("Decoding"));
     }
 
     #[test]
-    fn test_xidentity_verify_wrong_pubkey_length() {
+    fn test_x25519_verify_wrong_pubkey_length() {
         use base64ct::{Base64, Encoding};
 
         // Encode 16 bytes instead of 32
         let short_key = Base64::encode_string(&[0u8; 16]);
-        let result = ACEGF::xidentity_verify_internal(&short_key, b"test message", &[0u8; 64]);
+        let result = ACEGF::x25519_verify_internal(&short_key, b"test message", &[0u8; 64]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("32 bytes"));
     }
 
     #[test]
-    fn test_xidentity_verify_wrong_signature_length() {
+    fn test_x25519_verify_wrong_signature_length() {
         use base64ct::{Base64, Encoding};
         use ed25519_dalek::SigningKey;
 
@@ -1994,7 +1994,7 @@ mod tests {
         let pubkey_b64 = Base64::encode_string(pubkey.as_bytes());
 
         // Use wrong signature length (32 instead of 64)
-        let result = ACEGF::xidentity_verify_internal(
+        let result = ACEGF::x25519_verify_internal(
             &pubkey_b64,
             b"test message",
             &[0u8; 32], // Wrong length
@@ -2004,7 +2004,7 @@ mod tests {
     }
 
     #[test]
-    fn test_xidentity_verify_valid_signature() {
+    fn test_x25519_verify_valid_signature() {
         use base64ct::{Base64, Encoding};
         use ed25519_dalek::{Signer, SigningKey};
 
@@ -2019,13 +2019,13 @@ mod tests {
         let signature = signing_key.sign(message);
 
         // Verify
-        let result = ACEGF::xidentity_verify_internal(&pubkey_b64, message, &signature.to_bytes());
+        let result = ACEGF::x25519_verify_internal(&pubkey_b64, message, &signature.to_bytes());
         assert!(result.is_ok());
         assert!(result.unwrap());
     }
 
     #[test]
-    fn test_xidentity_verify_invalid_signature() {
+    fn test_x25519_verify_invalid_signature() {
         use base64ct::{Base64, Encoding};
         use ed25519_dalek::SigningKey;
 
@@ -2040,7 +2040,7 @@ mod tests {
         let fake_signature = [0u8; 64];
 
         // Verify should return false (not error)
-        let result = ACEGF::xidentity_verify_internal(&pubkey_b64, message, &fake_signature);
+        let result = ACEGF::x25519_verify_internal(&pubkey_b64, message, &fake_signature);
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Should be false for invalid signature
     }
@@ -2050,20 +2050,20 @@ mod tests {
     // =====================================================
 
     #[test]
-    fn test_encrypt_for_xidentity_basic() {
+    fn test_encrypt_for_x25519_basic() {
         use base64ct::{Base64, Encoding};
         use x25519_dalek::{PublicKey, StaticSecret};
 
         // Generate a recipient keypair
         let recipient_secret = StaticSecret::from([42u8; 32]);
         let recipient_public = PublicKey::from(&recipient_secret);
-        let recipient_xidentity_b64 = Base64::encode_string(recipient_public.as_bytes());
+        let recipient_x25519_b64 = Base64::encode_string(recipient_public.as_bytes());
 
         // Test data
         let plaintext = b"Hello, World! This is a test message for encryption.";
 
         // Encrypt
-        let result = ACEGF::encrypt_for_xidentity(&recipient_xidentity_b64, plaintext);
+        let result = ACEGF::encrypt_for_x25519(&recipient_x25519_b64, plaintext);
         assert!(result.is_ok(), "Encryption should succeed");
 
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) = result.unwrap();
@@ -2101,31 +2101,31 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_for_xidentity_invalid_pubkey() {
+    fn test_encrypt_for_x25519_invalid_pubkey() {
         // Invalid base64
-        let result = ACEGF::encrypt_for_xidentity("not-valid-base64!!!", b"test");
+        let result = ACEGF::encrypt_for_x25519("not-valid-base64!!!", b"test");
         assert!(result.is_err(), "Should fail with invalid base64");
 
         // Valid base64 but wrong length
         use base64ct::{Base64, Encoding};
         let short_key = Base64::encode_string(&[1u8; 16]); // Only 16 bytes
-        let result = ACEGF::encrypt_for_xidentity(&short_key, b"test");
+        let result = ACEGF::encrypt_for_x25519(&short_key, b"test");
         assert!(result.is_err(), "Should fail with wrong key length");
         assert!(result.unwrap_err().to_string().contains("32 bytes"));
     }
 
     #[test]
-    fn test_encrypt_for_xidentity_empty_plaintext() {
+    fn test_encrypt_for_x25519_empty_plaintext() {
         use base64ct::{Base64, Encoding};
         use x25519_dalek::{PublicKey, StaticSecret};
 
         // Generate a recipient keypair
         let recipient_secret = StaticSecret::from([42u8; 32]);
         let recipient_public = PublicKey::from(&recipient_secret);
-        let recipient_xidentity_b64 = Base64::encode_string(recipient_public.as_bytes());
+        let recipient_x25519_b64 = Base64::encode_string(recipient_public.as_bytes());
 
         // Encrypt empty data
-        let result = ACEGF::encrypt_for_xidentity(&recipient_xidentity_b64, b"");
+        let result = ACEGF::encrypt_for_x25519(&recipient_x25519_b64, b"");
         assert!(result.is_ok(), "Should handle empty plaintext");
 
         let (_, _, _, encrypted_data) = result.unwrap();
@@ -2137,19 +2137,19 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_for_xidentity_large_data() {
+    fn test_encrypt_for_x25519_large_data() {
         use base64ct::{Base64, Encoding};
         use x25519_dalek::{PublicKey, StaticSecret};
 
         // Generate a recipient keypair
         let recipient_secret = StaticSecret::from([42u8; 32]);
         let recipient_public = PublicKey::from(&recipient_secret);
-        let recipient_xidentity_b64 = Base64::encode_string(recipient_public.as_bytes());
+        let recipient_x25519_b64 = Base64::encode_string(recipient_public.as_bytes());
 
         // Test with larger data (1MB)
         let large_data = vec![0xABu8; 1024 * 1024];
 
-        let result = ACEGF::encrypt_for_xidentity(&recipient_xidentity_b64, &large_data);
+        let result = ACEGF::encrypt_for_x25519(&recipient_x25519_b64, &large_data);
         assert!(result.is_ok(), "Should handle large plaintext");
 
         let (_, _, _, encrypted_data) = result.unwrap();
@@ -2159,20 +2159,20 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
-        // Generate a wallet to get valid mnemonic and xidentity
+        // Generate a wallet to get valid mnemonic and x25519
         let passphrase = "test_password";
         let entity = crate::acegf_core::ACEGFCore::generate_ace_internal(passphrase, None)
             .expect("Should generate wallet");
 
         let mnemonic = &entity.mnemonic;
-        let xidentity = &entity.xidentity;
+        let x25519 = &entity.x25519;
 
         // Test data
         let original_plaintext =
             b"This is a secret message that should be encrypted and decrypted correctly!";
 
         // Encrypt
-        let encrypt_result = ACEGF::encrypt_for_xidentity(xidentity, original_plaintext);
+        let encrypt_result = ACEGF::encrypt_for_x25519(x25519, original_plaintext);
         assert!(encrypt_result.is_ok(), "Encryption should succeed");
 
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) = encrypt_result.unwrap();
@@ -2211,14 +2211,14 @@ mod tests {
                 .expect("Should generate wallet with secondary passphrase");
 
         let mnemonic = &entity.mnemonic;
-        let xidentity = &entity.xidentity;
+        let x25519 = &entity.x25519;
 
         // Test data
         let original_plaintext = b"Secret message with secondary passphrase protection";
 
         // Encrypt
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) =
-            ACEGF::encrypt_for_xidentity(xidentity, original_plaintext)
+            ACEGF::encrypt_for_x25519(x25519, original_plaintext)
                 .expect("Encryption should succeed");
 
         // Decrypt with secondary passphrase
@@ -2262,10 +2262,10 @@ mod tests {
         let entity2 = crate::acegf_core::ACEGFCore::generate_ace_internal(passphrase, None)
             .expect("Should generate wallet 2");
 
-        // Encrypt with wallet1's xidentity
+        // Encrypt with wallet1's x25519
         let original = b"Secret for wallet1";
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) =
-            ACEGF::encrypt_for_xidentity(&entity1.xidentity, original)
+            ACEGF::encrypt_for_x25519(&entity1.x25519, original)
                 .expect("Encryption should succeed");
 
         // Try to decrypt with wallet2's mnemonic (should fail)
@@ -2293,7 +2293,7 @@ mod tests {
         // Encrypt
         let original = b"Secret message";
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) =
-            ACEGF::encrypt_for_xidentity(&entity.xidentity, original)
+            ACEGF::encrypt_for_x25519(&entity.x25519, original)
                 .expect("Encryption should succeed");
 
         // Try to decrypt with wrong passphrase
@@ -2321,7 +2321,7 @@ mod tests {
         // Encrypt
         let original = b"Integrity protected message";
         let (ephemeral_pub, encrypted_aes_key, iv, mut encrypted_data) =
-            ACEGF::encrypt_for_xidentity(&entity.xidentity, original)
+            ACEGF::encrypt_for_x25519(&entity.x25519, original)
                 .expect("Encryption should succeed");
 
         // Tamper with the ciphertext
@@ -2355,7 +2355,7 @@ mod tests {
 
         // Encrypt
         let (ephemeral_pub, encrypted_aes_key, _, encrypted_data) =
-            ACEGF::encrypt_for_xidentity(&entity.xidentity, b"test")
+            ACEGF::encrypt_for_x25519(&entity.x25519, b"test")
                 .expect("Encryption should succeed");
 
         // Try with wrong IV length
@@ -2383,7 +2383,7 @@ mod tests {
         let binary_data: Vec<u8> = (0..=255).collect();
 
         let (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) =
-            ACEGF::encrypt_for_xidentity(&entity.xidentity, &binary_data)
+            ACEGF::encrypt_for_x25519(&entity.x25519, &binary_data)
                 .expect("Encryption should succeed");
 
         let decrypted = ACEGF::decrypt_internal(
@@ -2410,16 +2410,16 @@ mod tests {
 
         let recipient_secret = StaticSecret::from([42u8; 32]);
         let recipient_public = PublicKey::from(&recipient_secret);
-        let recipient_xidentity_b64 = Base64::encode_string(recipient_public.as_bytes());
+        let recipient_x25519_b64 = Base64::encode_string(recipient_public.as_bytes());
 
         let plaintext = b"Same message encrypted twice";
 
         // Encrypt twice
         let (_, _, iv1, encrypted1) =
-            ACEGF::encrypt_for_xidentity(&recipient_xidentity_b64, plaintext)
+            ACEGF::encrypt_for_x25519(&recipient_x25519_b64, plaintext)
                 .expect("First encryption should succeed");
         let (_, _, iv2, encrypted2) =
-            ACEGF::encrypt_for_xidentity(&recipient_xidentity_b64, plaintext)
+            ACEGF::encrypt_for_x25519(&recipient_x25519_b64, plaintext)
                 .expect("Second encryption should succeed");
 
         // Each encryption should use random IV and ephemeral key
@@ -2435,18 +2435,18 @@ mod tests {
         // Two different recipients
         let recipient1_secret = StaticSecret::from([42u8; 32]);
         let recipient1_public = PublicKey::from(&recipient1_secret);
-        let recipient1_xidentity = Base64::encode_string(recipient1_public.as_bytes());
+        let recipient1_x25519 = Base64::encode_string(recipient1_public.as_bytes());
 
         let recipient2_secret = StaticSecret::from([43u8; 32]);
         let recipient2_public = PublicKey::from(&recipient2_secret);
-        let recipient2_xidentity = Base64::encode_string(recipient2_public.as_bytes());
+        let recipient2_x25519 = Base64::encode_string(recipient2_public.as_bytes());
 
         let plaintext = b"Message for specific recipient";
 
         // Encrypt for each recipient
-        let (_, enc_key1, _, _) = ACEGF::encrypt_for_xidentity(&recipient1_xidentity, plaintext)
+        let (_, enc_key1, _, _) = ACEGF::encrypt_for_x25519(&recipient1_x25519, plaintext)
             .expect("Encryption for recipient1 should succeed");
-        let (_, enc_key2, _, _) = ACEGF::encrypt_for_xidentity(&recipient2_xidentity, plaintext)
+        let (_, enc_key2, _, _) = ACEGF::encrypt_for_x25519(&recipient2_x25519, plaintext)
             .expect("Encryption for recipient2 should succeed");
 
         // Encrypted AES keys should be different (encrypted with different DH keys)
@@ -2457,7 +2457,7 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // XKEM (ML-KEM-768) — parallel to the xidentity tests above
+    // XKEM (ML-KEM-768) — parallel to the x25519 tests above
     // ──────────────────────────────────────────────────────────────
 
     #[test]
@@ -2482,17 +2482,17 @@ mod tests {
     }
 
     #[test]
-    fn test_xkem_is_aligned_with_xidentity_base64_shape() {
-        // Both xidentity (X25519) and xkem (ML-KEM-768) must be Base64 strings
+    fn test_xkem_is_aligned_with_x25519_base64_shape() {
+        // Both x25519 (X25519) and xkem (ML-KEM-768) must be Base64 strings
         // on the generated entity — callers must be able to treat them
         // identically as "publishable recipient identifiers".
         let entity = ACEGFCore::generate_ace_internal("shape-test", None).unwrap();
 
         use base64ct::{Base64, Encoding};
-        let xidentity_bytes = Base64::decode_vec(&entity.xidentity).unwrap();
+        let x25519_bytes = Base64::decode_vec(&entity.x25519).unwrap();
         let xkem_bytes = Base64::decode_vec(&entity.xkem).unwrap();
 
-        assert_eq!(xidentity_bytes.len(), 32, "X25519 public key is 32 bytes");
+        assert_eq!(x25519_bytes.len(), 32, "X25519 public key is 32 bytes");
         assert_eq!(
             xkem_bytes.len(),
             1184,
@@ -2558,12 +2558,12 @@ mod tests {
     fn test_hybrid_roundtrip() {
         let pass = "hybrid-roundtrip";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
-        assert!(!entity.xidentity.is_empty());
+        assert!(!entity.x25519.is_empty());
         assert!(!entity.xkem.is_empty());
 
         let plaintext = b"Quantum-safe NFT unlockable content - top secret.";
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, plaintext).unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, plaintext).unwrap();
 
         assert_eq!(payload.v, HybridEncryptedPayload::VERSION);
         assert!(!payload.ephemeral_x25519_pub_b64.is_empty());
@@ -2580,7 +2580,7 @@ mod tests {
         // any rename / drift on either side should be caught by this test.
         let entity = ACEGFCore::generate_ace_internal("v-tag", None).unwrap();
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"hi").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"hi").unwrap();
         assert_eq!(payload.v, "acegf-hybrid-kem-v1");
     }
 
@@ -2591,7 +2591,7 @@ mod tests {
         let pass = "version-mismatch";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let mut payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"hi").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"hi").unwrap();
 
         payload.v = "acegf-hybrid-kem-v0".to_string();
         let result = ACEGF::decrypt_for_recipient_pq(&entity.mnemonic, pass, &payload, None);
@@ -2605,7 +2605,7 @@ mod tests {
         let pass = "tamper-eph";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let mut payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"hi").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"hi").unwrap();
 
         // Swap in a random but well-formed 32-byte X25519 pub.
         use base64ct::{Base64, Encoding};
@@ -2626,7 +2626,7 @@ mod tests {
         let pass = "tamper-kem-ct";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let mut payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"hi").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"hi").unwrap();
 
         use base64ct::{Base64, Encoding};
         let mut kem_ct_bytes = Base64::decode_vec(&payload.kem_ciphertext_b64).unwrap();
@@ -2643,7 +2643,7 @@ mod tests {
         let pass = "tamper-aes-ct";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let mut payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"hello").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"hello").unwrap();
 
         payload.ciphertext[0] ^= 0x01;
 
@@ -2659,7 +2659,7 @@ mod tests {
         let bob = ACEGFCore::generate_ace_internal(pass, None).unwrap();
 
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&alice.xidentity, &alice.xkem, b"Alice-only").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&alice.x25519, &alice.xkem, b"Alice-only").unwrap();
 
         let result = ACEGF::decrypt_for_recipient_pq(&bob.mnemonic, pass, &payload, None);
         assert!(result.is_err(), "Bob must not be able to decrypt Alice's payload");
@@ -2672,9 +2672,9 @@ mod tests {
         let entity = ACEGFCore::generate_ace_internal("fresh-randomness", None).unwrap();
 
         let p1 =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"same plaintext").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"same plaintext").unwrap();
         let p2 =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"same plaintext").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"same plaintext").unwrap();
 
         assert_ne!(p1.ephemeral_x25519_pub_b64, p2.ephemeral_x25519_pub_b64);
         assert_ne!(p1.kem_ciphertext_b64, p2.kem_ciphertext_b64);
@@ -2688,7 +2688,7 @@ mod tests {
         let pass = "empty";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"").unwrap();
         let recovered =
             ACEGF::decrypt_for_recipient_pq(&entity.mnemonic, pass, &payload, None).unwrap();
         assert!(recovered.is_empty());
@@ -2700,7 +2700,7 @@ mod tests {
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let plaintext = vec![0x5Au8; 256 * 1024]; // 256 KiB
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, &plaintext).unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, &plaintext).unwrap();
         let recovered =
             ACEGF::decrypt_for_recipient_pq(&entity.mnemonic, pass, &payload, None).unwrap();
         assert_eq!(recovered, plaintext);
@@ -2713,7 +2713,7 @@ mod tests {
         let pass = "json-wire";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"wire-format").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"wire-format").unwrap();
 
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("acegf-hybrid-kem-v1"));
@@ -2734,15 +2734,15 @@ mod tests {
         // fallback to X25519-only.
         let entity = ACEGFCore::generate_ace_internal("missing-xkem", None).unwrap();
         let result =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, "", b"hi");
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, "", b"hi");
         assert!(result.is_err(), "empty xkem must error, not downgrade");
     }
 
     #[test]
-    fn test_hybrid_missing_xidentity_errors() {
+    fn test_hybrid_missing_x25519_errors() {
         let entity = ACEGFCore::generate_ace_internal("missing-x", None).unwrap();
         let result = ACEGF::encrypt_for_recipient_pq("", &entity.xkem, b"hi");
-        assert!(result.is_err(), "empty xidentity must error, not skip classical half");
+        assert!(result.is_err(), "empty x25519 must error, not skip classical half");
     }
 
     #[test]
@@ -2755,7 +2755,7 @@ mod tests {
 
         // Legacy path still works.
         let (eph_pub, enc_key, iv, legacy_ct) =
-            ACEGF::encrypt_for_xidentity(&entity.xidentity, b"legacy message").unwrap();
+            ACEGF::encrypt_for_x25519(&entity.x25519, b"legacy message").unwrap();
         let legacy_pt = ACEGF::decrypt_internal(
             &entity.mnemonic,
             pass,
@@ -2770,7 +2770,7 @@ mod tests {
 
         // New hybrid path also works.
         let hybrid_payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"new message")
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"new message")
                 .unwrap();
         let hybrid_pt =
             ACEGF::decrypt_for_recipient_pq(&entity.mnemonic, pass, &hybrid_payload, None)
@@ -2787,7 +2787,7 @@ mod tests {
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
 
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"both paths").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"both paths").unwrap();
 
         let via_passphrase =
             ACEGF::decrypt_for_recipient_pq(&entity.mnemonic, pass, &payload, None).unwrap();
@@ -2815,7 +2815,7 @@ mod tests {
         let pass = "binding";
         let entity = ACEGFCore::generate_ace_internal(pass, None).unwrap();
         let payload =
-            ACEGF::encrypt_for_recipient_pq(&entity.xidentity, &entity.xkem, b"x").unwrap();
+            ACEGF::encrypt_for_recipient_pq(&entity.x25519, &entity.xkem, b"x").unwrap();
 
         for bad in &[
             "",

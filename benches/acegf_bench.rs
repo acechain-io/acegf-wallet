@@ -54,10 +54,10 @@ fn benchmark_core_operations(c: &mut Criterion) {
     // 1. Call FFI function to get the XID public key (requires unsafe block)
     let xid_pub: String = unsafe {
         // Explicitly cast to the required FFI pointer type: *const u8 -> *const c_char
-        let xid_pub_c_ptr = ACEGF::get_xidentity(mn_ptr, pass_ptr, None);
+        let xid_pub_c_ptr = ACEGF::get_x25519(mn_ptr, pass_ptr, None);
 
         if xid_pub_c_ptr.is_null() {
-            panic!("Failed to generate xidentity in benchmark setup.");
+            panic!("Failed to generate x25519 in benchmark setup.");
         }
 
         // 2. Safely convert the *mut c_char pointer to a Rust String

@@ -48,7 +48,7 @@ pub struct WasmWallet {
     pub cosmos_address: String,
     pub polkadot_address: String,
     pub xaddress: String,
-    pub xidentity: String,
+    pub x25519: String,
     /// Base64-encoded ML-KEM-768 encapsulation key (post-quantum KEM identity).
     pub xkem: String,
     pub xid: String,
@@ -81,7 +81,7 @@ pub fn generate_with_secondary_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -137,7 +137,7 @@ pub fn view_wallet_with_secondary_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -201,12 +201,12 @@ pub fn acegf_sign_message_with_secondary_wasm(
 }
 
 // =====================================================
-// XIdentity Sign/Verify
+// X25519 Sign/Verify
 // =====================================================
 
-/// XIdentity sign - returns base64 signature on success, or "error:..." on failure
+/// X25519 sign - returns base64 signature on success, or "error:..." on failure
 #[wasm_bindgen]
-pub fn acegf_xidentity_sign_wasm(mnemonic: &str, passphrase: &str, message: &[u8]) -> String {
+pub fn acegf_x25519_sign_wasm(mnemonic: &str, passphrase: &str, message: &[u8]) -> String {
     match ACEGF::sign_message_internal(mnemonic, passphrase, None, message, 0) {
         Ok(sig) => {
             use base64ct::{Base64, Encoding};
@@ -216,14 +216,14 @@ pub fn acegf_xidentity_sign_wasm(mnemonic: &str, passphrase: &str, message: &[u8
     }
 }
 
-/// XIdentity verify - returns "true", "false", or "error:..." on failure
+/// X25519 verify - returns "true", "false", or "error:..." on failure
 #[wasm_bindgen]
-pub fn acegf_xidentity_verify_wasm(
-    xidentity_b64: &str,
+pub fn acegf_x25519_verify_wasm(
+    x25519_b64: &str,
     message: &[u8],
     signature: &[u8],
 ) -> String {
-    match ACEGF::xidentity_verify_internal(xidentity_b64, message, signature) {
+    match ACEGF::x25519_verify_internal(x25519_b64, message, signature) {
         Ok(valid) => {
             if valid {
                 "true".to_string()
@@ -307,7 +307,7 @@ pub fn acegf_change_passphrase_add_admin_wasm(
 }
 
 // =====================================================
-// AES Encrypt (for xidentity recipient)
+// AES Encrypt (for x25519 recipient)
 // =====================================================
 
 #[derive(serde::Serialize)]
@@ -318,12 +318,12 @@ struct EncryptedPayload {
     encrypted_data: String, // base64 encoded
 }
 
-/// Encrypt data for a recipient's xidentity public key
+/// Encrypt data for a recipient's x25519 public key
 /// Returns JSON: { ephemeral_pub, encrypted_aes_key, iv, encrypted_data }
 /// or "error:..." on failure
 #[wasm_bindgen]
-pub fn acegf_encrypt_for_xidentity(recipient_xidentity_b64: &str, plaintext: &[u8]) -> String {
-    match ACEGF::encrypt_for_xidentity(recipient_xidentity_b64, plaintext) {
+pub fn acegf_encrypt_for_x25519(recipient_x25519_b64: &str, plaintext: &[u8]) -> String {
+    match ACEGF::encrypt_for_x25519(recipient_x25519_b64, plaintext) {
         Ok((ephemeral_pub, encrypted_aes_key, iv, encrypted_data)) => {
             use base64ct::{Base64, Encoding};
             let payload = EncryptedPayload {
@@ -373,7 +373,7 @@ pub fn acegf_decrypt_with_mnemonic_wasm(
 // =====================================================
 // Hybrid X25519 + ML-KEM-768 Encrypt / Decrypt — THE NEW DEFAULT
 //
-// These functions fully replace `acegf_encrypt_for_xidentity` /
+// These functions fully replace `acegf_encrypt_for_x25519` /
 // `acegf_decrypt_with_mnemonic_wasm` for any new code path that needs to be
 // post-quantum safe (i.e., all of them). The legacy pair is retained
 // unchanged only so existing ciphertexts remain readable.
@@ -390,7 +390,7 @@ pub fn acegf_decrypt_with_mnemonic_wasm(
 
 /// Encrypt `plaintext` for a recipient using hybrid X25519 + ML-KEM-768.
 ///
-/// Both `recipient_xidentity_b64` and `recipient_xkem_b64` are required —
+/// Both `recipient_x25519_b64` and `recipient_xkem_b64` are required —
 /// there is no silent fallback. This is the **default** encryption path
 /// going forward.
 ///
@@ -398,11 +398,11 @@ pub fn acegf_decrypt_with_mnemonic_wasm(
 /// On failure returns `"error:..."`.
 #[wasm_bindgen]
 pub fn acegf_encrypt_for_recipient_pq_wasm(
-    recipient_xidentity_b64: &str,
+    recipient_x25519_b64: &str,
     recipient_xkem_b64: &str,
     plaintext: &[u8],
 ) -> String {
-    match ACEGF::encrypt_for_recipient_pq(recipient_xidentity_b64, recipient_xkem_b64, plaintext) {
+    match ACEGF::encrypt_for_recipient_pq(recipient_x25519_b64, recipient_xkem_b64, plaintext) {
         Ok(payload) => serde_json::to_string(&payload)
             .unwrap_or_else(|e| format!("error:serialization failed: {}", e)),
         Err(e) => format!("error:{}", e),
@@ -451,7 +451,7 @@ pub fn acegf_decrypt_for_recipient_pq_wasm(
 /// Parameters:
 /// * `mnemonic` / `passphrase` — sender's wallet (required: v2 derives
 ///   `wrap_master` from the sender's keys).
-/// * `recipient_xidentity_b64` — recipient's X25519 public key.
+/// * `recipient_x25519_b64` — recipient's X25519 public key.
 /// * `recipient_xkem_b64` — recipient's ML-KEM-768 encaps key.
 /// * `nonce_b64` — 16-byte Base64 nonce. Pass an empty string to have
 ///   the WASM generate a fresh random 16-byte nonce; pass a stored
@@ -464,7 +464,7 @@ pub fn acegf_decrypt_for_recipient_pq_wasm(
 pub fn acegf_encrypt_for_recipient_pq_v2_wasm(
     mnemonic: &str,
     passphrase: &str,
-    recipient_xidentity_b64: &str,
+    recipient_x25519_b64: &str,
     recipient_xkem_b64: &str,
     nonce_b64: &str,
     plaintext: &[u8],
@@ -494,7 +494,7 @@ pub fn acegf_encrypt_for_recipient_pq_v2_wasm(
     let result = ACEGF::encrypt_for_recipient_pq_v2(
         mnemonic,
         passphrase,
-        recipient_xidentity_b64,
+        recipient_x25519_b64,
         recipient_xkem_b64,
         nonce_arr_opt.as_ref(),
         plaintext,
@@ -573,7 +573,7 @@ pub fn acegf_decrypt_for_recipient_pq_v2_with_prf_wasm(
 ///
 /// Parameters:
 /// * `mnemonic` / `passphrase` — sender's wallet.
-/// * `recipient_xidentity_b64` — recipient's X25519 public key.
+/// * `recipient_x25519_b64` — recipient's X25519 public key.
 /// * `recipient_xkem_b64` — recipient's ML-KEM-768 encaps key.
 /// * `nonce_b64` — the original 16-byte Base64 nonce (required).
 ///
@@ -583,14 +583,14 @@ pub fn acegf_decrypt_for_recipient_pq_v2_with_prf_wasm(
 pub fn acegf_regenerate_wrap_v2_wasm(
     mnemonic: &str,
     passphrase: &str,
-    recipient_xidentity_b64: &str,
+    recipient_x25519_b64: &str,
     recipient_xkem_b64: &str,
     nonce_b64: &str,
 ) -> String {
     let result = ACEGF::regenerate_wrap_v2(
         mnemonic,
         passphrase,
-        recipient_xidentity_b64,
+        recipient_x25519_b64,
         recipient_xkem_b64,
         nonce_b64,
     );
@@ -643,7 +643,7 @@ pub fn view_wallet_with_prf_wasm(mnemonic: &str, prf_key: &[u8]) -> JsValue {
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -1878,7 +1878,7 @@ pub fn bitcoin_address_to_script_pubkey(address: &str) -> String {
 // directly encode the REV32 (no encryption layer).
 
 /// Generate a new REV32 wallet with passphrase
-/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, xidentity }
+/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, x25519 }
 /// or JSON: { error: true, message: "..." }
 #[wasm_bindgen]
 pub fn generate_rev32_wasm(passphrase: &str) -> JsValue {
@@ -1904,7 +1904,7 @@ pub fn generate_rev32_with_secondary_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -1958,7 +1958,7 @@ pub fn view_wallet_rev32_with_secondary_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -2011,7 +2011,7 @@ pub fn view_wallet_unified_with_secondary_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -2066,7 +2066,7 @@ pub fn view_wallet_unified_with_context_wasm(
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };
@@ -2180,10 +2180,10 @@ pub fn ml_dsa_44_sign_with_prf_wasm(mnemonic: &str, prf_key: &[u8], message: &[u
 // =====================================================
 // XKEM (ML-KEM-768 / FIPS 203) — post-quantum key encapsulation
 //
-// Interface shape mirrors XIdentity (X25519) exactly:
+// Interface shape mirrors X25519 (X25519) exactly:
 //   * all public-key / ciphertext / shared-secret values are Base64 strings,
 //   * success returns a plain string (for single-value APIs) or JSON (for
-//     tuple APIs, matching `acegf_encrypt_for_xidentity`),
+//     tuple APIs, matching `acegf_encrypt_for_x25519`),
 //   * failure returns "error:..." (single-value) or
 //     `{ "error": true, "message": "..." }` (JSON).
 // =====================================================
@@ -2191,7 +2191,7 @@ pub fn ml_dsa_44_sign_with_prf_wasm(mnemonic: &str, prf_key: &[u8], message: &[u
 /// Get the wallet's ML-KEM-768 encapsulation (public) key — the `xkem`
 /// identity — as a Base64 string, derived from `mnemonic + passphrase`.
 ///
-/// Parallel to the xidentity field returned from `generate_wasm` /
+/// Parallel to the x25519 field returned from `generate_wasm` /
 /// `view_wallet_with_passphrase_wasm`.
 ///
 /// Returns a Base64 string (1184 raw bytes) on success, or `"error:..."`
@@ -2215,7 +2215,7 @@ pub fn acegf_xkem_pubkey_wasm(mnemonic: &str, passphrase: &str) -> String {
 
 /// Encapsulate a shared secret against a recipient's published xkem.
 ///
-/// Parallel to `acegf_encrypt_for_xidentity`: no mnemonic is required —
+/// Parallel to `acegf_encrypt_for_x25519`: no mnemonic is required —
 /// any party that has the recipient's xkem can run this. On success returns
 /// a JSON string `{ "shared_secret": "<b64>", "ciphertext": "<b64>" }`.
 /// Transmit `ciphertext` to the recipient; they recover the same
@@ -2322,7 +2322,7 @@ pub fn view_wallet_with_context_prf_wasm(mnemonic: &str, prf_key: &[u8], context
                 cosmos_address: entity.cosmos_address,
                 polkadot_address: entity.polkadot_address,
                 xaddress: entity.xaddress,
-                xidentity: entity.xidentity,
+                x25519: entity.x25519,
                 xkem: entity.xkem,
                 xid: entity.xid,
             };

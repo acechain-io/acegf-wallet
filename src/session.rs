@@ -17,7 +17,7 @@ pub struct WalletPublicView {
     pub cosmos_address: String,
     pub polkadot_address: String,
     pub xaddress: String,
-    pub xidentity: String,
+    pub x25519: String,
     /// Base64-encoded ML-KEM-768 encapsulation key (post-quantum KEM identity).
     pub xkem: String,
 }
@@ -31,7 +31,7 @@ impl From<&CryptoEntity> for WalletPublicView {
             cosmos_address: entity.cosmos_address.clone(),
             polkadot_address: entity.polkadot_address.clone(),
             xaddress: entity.xaddress.clone(),
-            xidentity: entity.xidentity.clone(),
+            x25519: entity.x25519.clone(),
             xkem: entity.xkem.clone(),
         }
     }
@@ -112,12 +112,12 @@ impl Session {
         &self.wallet
     }
 
-    pub fn xidentity(&self) -> &str {
-        &self.wallet.xidentity
+    pub fn x25519(&self) -> &str {
+        &self.wallet.x25519
     }
 
     /// Base64-encoded ML-KEM-768 encapsulation key (post-quantum
-    /// key-exchange identity). Parallel to `xidentity()`.
+    /// key-exchange identity). Parallel to `x25519()`.
     pub fn xkem(&self) -> &str {
         &self.wallet.xkem
     }
@@ -152,11 +152,11 @@ impl Session {
     }
 
     pub fn encrypt_for_recipient(
-        recipient_xidentity_b64: &str,
+        recipient_x25519_b64: &str,
         plaintext: &[u8],
     ) -> Result<EncryptedPayload, Box<dyn Error>> {
         let (ephemeral_pub_b64, encrypted_aes_key_b64, iv_b64, ciphertext) =
-            ACEGF::encrypt_for_xidentity(recipient_xidentity_b64, plaintext)?;
+            ACEGF::encrypt_for_x25519(recipient_x25519_b64, plaintext)?;
         Ok(EncryptedPayload {
             ephemeral_pub_b64,
             encrypted_aes_key_b64,
@@ -176,17 +176,17 @@ impl Session {
         ACEGF::decrypt_for_recipient_pq_with_base_key(&self.mnemonic, &self.base_key, payload)
     }
 
-    /// Encapsulate + encrypt for a recipient identified by `(xidentity, xkem)`
+    /// Encapsulate + encrypt for a recipient identified by `(x25519, xkem)`
     /// using hybrid X25519 + ML-KEM-768. Static helper — no mnemonic needed
     /// on the sender side (randomness comes from the OS RNG). This is the
     /// **default** path for new code; [`Session::encrypt_for_recipient`]
     /// remains available only for interoperating with legacy peers.
     pub fn encrypt_for_recipient_pq(
-        recipient_xidentity_b64: &str,
+        recipient_x25519_b64: &str,
         recipient_xkem_b64: &str,
         plaintext: &[u8],
     ) -> Result<HybridEncryptedPayload, Box<dyn Error>> {
-        ACEGF::encrypt_for_recipient_pq(recipient_xidentity_b64, recipient_xkem_b64, plaintext)
+        ACEGF::encrypt_for_recipient_pq(recipient_x25519_b64, recipient_xkem_b64, plaintext)
     }
 }
 
@@ -219,11 +219,11 @@ impl ACEGF {
         Session::open(mnemonic, passphrase, secondary_passphrase)
     }
 
-    pub fn encrypt_payload_for_xidentity(
-        recipient_xidentity_b64: &str,
+    pub fn encrypt_payload_for_x25519(
+        recipient_x25519_b64: &str,
         plaintext: &[u8],
     ) -> Result<EncryptedPayload, Box<dyn Error>> {
-        Session::encrypt_for_recipient(recipient_xidentity_b64, plaintext)
+        Session::encrypt_for_recipient(recipient_x25519_b64, plaintext)
     }
 }
 
@@ -236,7 +236,7 @@ mod tests {
         let wallet = ACEGF::generate_wallet("secret-passphrase", None).expect("wallet generation");
         let session = Session::open(&wallet.mnemonic, "secret-passphrase", None).unwrap();
 
-        let envelope = Session::encrypt_for_recipient(session.xidentity(), b"payload").unwrap();
+        let envelope = Session::encrypt_for_recipient(session.x25519(), b"payload").unwrap();
         let plaintext = session.decrypt_payload(&envelope).unwrap();
 
         assert_eq!(plaintext, b"payload");

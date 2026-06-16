@@ -64,7 +64,7 @@ void acegf_free_string(char *ptr);
 char *acegf_version(void);
 
 // Generate a new wallet with passphrase
-// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, xidentity }
+// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, x25519 }
 // or JSON: { error: true, message: "..." }
 char *acegf_generate(const char *passphrase);
 
@@ -94,16 +94,16 @@ char *acegf_sign_message_with_secondary(const char *mnemonic,
                                         size_t message_len,
                                         uint32_t curve);
 
-char *acegf_xidentity_sign(const char *mnemonic,
-                           const char *passphrase,
-                           const uint8_t *message,
-                           size_t message_len);
+char *acegf_x25519_sign(const char *mnemonic,
+                        const char *passphrase,
+                        const uint8_t *message,
+                        size_t message_len);
 
-char *acegf_xidentity_verify(const char *xidentity_b64,
-                             const uint8_t *message,
-                             size_t message_len,
-                             const uint8_t *signature,
-                             size_t signature_len);
+char *acegf_x25519_verify(const char *x25519_b64,
+                          const uint8_t *message,
+                          size_t message_len,
+                          const uint8_t *signature,
+                          size_t signature_len);
 
 char *acegf_compute_dh_key(const char *mnemonic, const char *passphrase, const char *peer_pub_b64);
 
@@ -111,16 +111,16 @@ char *acegf_change_passphrase(const char *mnemonic,
                               const char *old_passphrase,
                               const char *new_passphrase);
 
-// Encrypt data for a recipient's xidentity public key
+// Encrypt data for a recipient's x25519 public key
 // Returns JSON: { ephemeral_pub, encrypted_aes_key, iv, encrypted_data }
-char *acegf_encrypt_for_xidentity(const char *recipient_xidentity_b64,
-                                  const uint8_t *plaintext,
-                                  size_t plaintext_len);
+char *acegf_encrypt_for_x25519(const char *recipient_x25519_b64,
+                               const uint8_t *plaintext,
+                               size_t plaintext_len);
 
 // Get the wallet's xkem (ML-KEM-768 encapsulation key) as a Base64
 // C string, derived from `mnemonic + passphrase`.
 //
-// Parallel to `acegf_xidentity_sign` in that the wallet-side key is
+// Parallel to `acegf_x25519_sign` in that the wallet-side key is
 // re-derived from the mnemonic; the returned string is the public
 // encapsulation key that the wallet publishes as its post-quantum
 // key-exchange identity.
@@ -130,7 +130,7 @@ char *acegf_xkem_pubkey(const char *mnemonic, const char *passphrase);
 
 // Encapsulate a shared secret against a recipient's published xkem.
 //
-// Parallel to `acegf_encrypt_for_xidentity`: no mnemonic required; the
+// Parallel to `acegf_encrypt_for_x25519`: no mnemonic required; the
 // recipient's Base64 xkem is the only input beyond the returned JSON
 // transport shape.
 //
@@ -184,7 +184,7 @@ char *acegf_decrypt_with_mnemonic_str(const char *mnemonic,
 
 // Encrypt `plaintext` for a recipient using hybrid X25519 + ML-KEM-768.
 //
-// Both `recipient_xidentity_b64` and `recipient_xkem_b64` are required —
+// Both `recipient_x25519_b64` and `recipient_xkem_b64` are required —
 // there is NO silent fallback to legacy X25519-only encryption. If either
 // is missing or malformed the call returns `"error:..."`.
 //
@@ -192,7 +192,7 @@ char *acegf_decrypt_with_mnemonic_str(const char *mnemonic,
 // `HybridEncryptedPayload`. On failure returns a C string prefixed with
 // `"error:"`. The caller must free the returned pointer via
 // [`acegf_free_string`].
-char *acegf_encrypt_for_recipient_pq(const char *recipient_xidentity_b64,
+char *acegf_encrypt_for_recipient_pq(const char *recipient_x25519_b64,
                                      const char *recipient_xkem_b64,
                                      const uint8_t *plaintext,
                                      size_t plaintext_len);
@@ -370,7 +370,7 @@ char *bitcoin_convert_address_network(const char *address, uint8_t testnet);
 char *bitcoin_address_to_script_pubkey(const char *address);
 
 // Generate a new REV32 wallet with passphrase
-// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, xidentity }
+// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, x25519 }
 // or JSON: { error: true, message: "..." }
 char *acegf_generate_rev32(const char *passphrase);
 

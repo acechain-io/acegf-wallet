@@ -43,11 +43,11 @@ pub struct CryptoEntity {
     pub cosmos_address: String,
     pub polkadot_address: String,
     pub xaddress: String,
-    pub xidentity: String,
+    pub x25519: String,
     /// Base64-encoded ML-KEM-768 encapsulation key (1184 bytes).
     ///
     /// This is the wallet's **post-quantum key-exchange identity** — the
-    /// analogue of `xidentity` (X25519) but built on the NIST-standardized
+    /// analogue of `x25519` (X25519) but built on the NIST-standardized
     /// lattice KEM (FIPS 203). It is safe to publish; any party can run
     /// `ACEGF::encapsulate_for_xkem` against it to derive a shared secret,
     /// and only the wallet owner can recover the same secret via
@@ -70,7 +70,7 @@ impl Serialize for CryptoEntity {
         state.serialize_field("cosmos_address", &self.cosmos_address)?;
         state.serialize_field("polkadot_address", &self.polkadot_address)?;
         state.serialize_field("xaddress", &self.xaddress)?;
-        state.serialize_field("xidentity", &self.xidentity)?;
+        state.serialize_field("x25519", &self.x25519)?;
         state.serialize_field("xkem", &self.xkem)?;
         state.serialize_field("xid", &self.xid)?;
         state.serialize_field("tron_address", &self.tron_address)?;
@@ -88,7 +88,7 @@ impl std::fmt::Debug for CryptoEntity {
             .field("cosmos_address", &self.cosmos_address)
             .field("polkadot_address", &self.polkadot_address)
             .field("xaddress", &self.xaddress)
-            .field("xidentity", &self.xidentity)
+            .field("x25519", &self.x25519)
             .field("xkem", &self.xkem)
             .field("xid", &self.xid)
             .field("tron_address", &self.tron_address)
@@ -106,7 +106,7 @@ impl Default for CryptoEntity {
             cosmos_address: String::new(),
             polkadot_address: String::new(),
             xaddress: String::new(),
-            xidentity: String::new(),
+            x25519: String::new(),
             xkem: String::new(),
             xid: String::new(),
             tron_address: String::new(),
@@ -180,7 +180,7 @@ mod tests {
         assert!(entity.cosmos_address.is_empty());
         assert!(entity.polkadot_address.is_empty());
         assert!(entity.xaddress.is_empty());
-        assert!(entity.xidentity.is_empty());
+        assert!(entity.x25519.is_empty());
     }
 
     #[test]
@@ -193,7 +193,7 @@ mod tests {
             cosmos_address: "cosmos1...".to_string(),
             polkadot_address: "1...".to_string(),
             xaddress: "acegf1...".to_string(),
-            xidentity: "base64...".to_string(),
+            x25519: "base64...".to_string(),
             xkem: "base64-xkem...".to_string(),
             xid: String::new(),
             tron_address: String::new(),
@@ -318,7 +318,7 @@ mod tests {
             cosmos_address: "cosmos1".to_string(),
             polkadot_address: "1abc".to_string(),
             xaddress: "acegf1".to_string(),
-            xidentity: "base64".to_string(),
+            x25519: "base64".to_string(),
             xkem: "base64-xkem".to_string(),
             xid: String::new(),
             tron_address: String::new(),

@@ -75,7 +75,7 @@ pub extern "C" fn acegf_version() -> *mut c_char {
 // =====================================================
 
 /// Generate a new wallet with passphrase
-/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, xidentity }
+/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, x25519 }
 /// or JSON: { error: true, message: "..." }
 #[no_mangle]
 pub unsafe extern "C" fn acegf_generate(passphrase: *const c_char) -> *mut c_char {
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn acegf_generate_with_secondary(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn acegf_view_wallet_with_secondary(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())
@@ -208,11 +208,11 @@ pub unsafe extern "C" fn acegf_sign_message_with_secondary(
 }
 
 // =====================================================
-// XIdentity Sign/Verify
+// X25519 Sign/Verify
 // =====================================================
 
 #[no_mangle]
-pub unsafe extern "C" fn acegf_xidentity_sign(
+pub unsafe extern "C" fn acegf_x25519_sign(
     mnemonic: *const c_char,
     passphrase: *const c_char,
     message: *const u8,
@@ -233,14 +233,14 @@ pub unsafe extern "C" fn acegf_xidentity_sign(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn acegf_xidentity_verify(
-    xidentity_b64: *const c_char,
+pub unsafe extern "C" fn acegf_x25519_verify(
+    x25519_b64: *const c_char,
     message: *const u8,
     message_len: size_t,
     signature: *const u8,
     signature_len: size_t,
 ) -> *mut c_char {
-    let xidentity_str = from_cstr_or_empty(xidentity_b64);
+    let x25519_str = from_cstr_or_empty(x25519_b64);
 
     if message.is_null() || signature.is_null() {
         return to_cstring("error:null pointer".to_string());
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn acegf_xidentity_verify(
     let message_slice = std::slice::from_raw_parts(message, message_len);
     let signature_slice = std::slice::from_raw_parts(signature, signature_len);
 
-    match ACEGF::xidentity_verify_internal(xidentity_str, message_slice, signature_slice) {
+    match ACEGF::x25519_verify_internal(x25519_str, message_slice, signature_slice) {
         Ok(valid) => to_cstring(if valid {
             "true".to_string()
         } else {
@@ -302,22 +302,22 @@ pub unsafe extern "C" fn acegf_change_passphrase(
 // Encryption/Decryption
 // =====================================================
 
-/// Encrypt data for a recipient's xidentity public key
+/// Encrypt data for a recipient's x25519 public key
 /// Returns JSON: { ephemeral_pub, encrypted_aes_key, iv, encrypted_data }
 #[no_mangle]
-pub unsafe extern "C" fn acegf_encrypt_for_xidentity(
-    recipient_xidentity_b64: *const c_char,
+pub unsafe extern "C" fn acegf_encrypt_for_x25519(
+    recipient_x25519_b64: *const c_char,
     plaintext: *const u8,
     plaintext_len: size_t,
 ) -> *mut c_char {
-    if recipient_xidentity_b64.is_null() || plaintext.is_null() {
+    if recipient_x25519_b64.is_null() || plaintext.is_null() {
         return to_cstring("error:null pointer".to_string());
     }
 
-    let xidentity_str = from_cstr_or_empty(recipient_xidentity_b64);
+    let x25519_str = from_cstr_or_empty(recipient_x25519_b64);
     let plaintext_slice = std::slice::from_raw_parts(plaintext, plaintext_len);
 
-    match ACEGF::encrypt_for_xidentity(xidentity_str, plaintext_slice) {
+    match ACEGF::encrypt_for_x25519(x25519_str, plaintext_slice) {
         Ok((ephemeral_pub, encrypted_aes_key, iv, encrypted_data)) => {
             let json = serde_json::json!({
                 "ephemeral_pub": ephemeral_pub,
@@ -334,16 +334,16 @@ pub unsafe extern "C" fn acegf_encrypt_for_xidentity(
 // =====================================================
 // XKEM (ML-KEM-768 / FIPS 203) — post-quantum key encapsulation
 //
-// Interface shape is deliberately aligned with the xidentity (X25519) FFI
+// Interface shape is deliberately aligned with the x25519 (X25519) FFI
 // surface above: Base64 strings in, Base64 strings out, error handling via
 // "error:..." C-string conventions. Callers can drop KEM into the same code
-// paths that currently publish / consume `xidentity`.
+// paths that currently publish / consume `x25519`.
 // =====================================================
 
 /// Get the wallet's xkem (ML-KEM-768 encapsulation key) as a Base64
 /// C string, derived from `mnemonic + passphrase`.
 ///
-/// Parallel to `acegf_xidentity_sign` in that the wallet-side key is
+/// Parallel to `acegf_x25519_sign` in that the wallet-side key is
 /// re-derived from the mnemonic; the returned string is the public
 /// encapsulation key that the wallet publishes as its post-quantum
 /// key-exchange identity.
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn acegf_xkem_pubkey(
 
 /// Encapsulate a shared secret against a recipient's published xkem.
 ///
-/// Parallel to `acegf_encrypt_for_xidentity`: no mnemonic required; the
+/// Parallel to `acegf_encrypt_for_x25519`: no mnemonic required; the
 /// recipient's Base64 xkem is the only input beyond the returned JSON
 /// transport shape.
 ///
@@ -538,7 +538,7 @@ pub unsafe extern "C" fn acegf_decrypt_with_mnemonic_str(
 // =====================================================
 // Hybrid X25519 + ML-KEM-768 Encrypt / Decrypt — THE NEW DEFAULT
 //
-// These functions fully replace `acegf_encrypt_for_xidentity` /
+// These functions fully replace `acegf_encrypt_for_x25519` /
 // `acegf_decrypt_with_mnemonic*` for any new code path that needs to be
 // post-quantum safe. The legacy pair is retained unchanged only so existing
 // ciphertexts remain readable.
@@ -549,7 +549,7 @@ pub unsafe extern "C" fn acegf_decrypt_with_mnemonic_str(
 
 /// Encrypt `plaintext` for a recipient using hybrid X25519 + ML-KEM-768.
 ///
-/// Both `recipient_xidentity_b64` and `recipient_xkem_b64` are required —
+/// Both `recipient_x25519_b64` and `recipient_xkem_b64` are required —
 /// there is NO silent fallback to legacy X25519-only encryption. If either
 /// is missing or malformed the call returns `"error:..."`.
 ///
@@ -559,20 +559,20 @@ pub unsafe extern "C" fn acegf_decrypt_with_mnemonic_str(
 /// [`acegf_free_string`].
 #[no_mangle]
 pub unsafe extern "C" fn acegf_encrypt_for_recipient_pq(
-    recipient_xidentity_b64: *const c_char,
+    recipient_x25519_b64: *const c_char,
     recipient_xkem_b64: *const c_char,
     plaintext: *const u8,
     plaintext_len: size_t,
 ) -> *mut c_char {
-    if recipient_xidentity_b64.is_null() || recipient_xkem_b64.is_null() || plaintext.is_null() {
+    if recipient_x25519_b64.is_null() || recipient_xkem_b64.is_null() || plaintext.is_null() {
         return to_cstring("error:null pointer".to_string());
     }
 
-    let xidentity_str = from_cstr_or_empty(recipient_xidentity_b64);
+    let x25519_str = from_cstr_or_empty(recipient_x25519_b64);
     let xkem_str = from_cstr_or_empty(recipient_xkem_b64);
     let plaintext_slice = std::slice::from_raw_parts(plaintext, plaintext_len);
 
-    match ACEGF::encrypt_for_recipient_pq(xidentity_str, xkem_str, plaintext_slice) {
+    match ACEGF::encrypt_for_recipient_pq(x25519_str, xkem_str, plaintext_slice) {
         Ok(payload) => match serde_json::to_string(&payload) {
             Ok(json) => to_cstring(json),
             Err(e) => to_cstring(format!("error:serialization failed: {}", e)),
@@ -1297,7 +1297,7 @@ pub unsafe extern "C" fn bitcoin_address_to_script_pubkey(address: *const c_char
 // =====================================================
 
 /// Generate a new REV32 wallet with passphrase
-/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, xidentity }
+/// Returns JSON: { mnemonic, solana_address, evm_address, bitcoin_address, cosmos_address, polkadot_address, xaddress, x25519 }
 /// or JSON: { error: true, message: "..." }
 #[no_mangle]
 pub unsafe extern "C" fn acegf_generate_rev32(passphrase: *const c_char) -> *mut c_char {
@@ -1322,7 +1322,7 @@ pub unsafe extern "C" fn acegf_generate_rev32_with_secondary(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())
@@ -1363,7 +1363,7 @@ pub unsafe extern "C" fn acegf_view_wallet_rev32_with_secondary(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())
@@ -1404,7 +1404,7 @@ pub unsafe extern "C" fn acegf_view_wallet_unified_with_secondary(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())
@@ -1455,7 +1455,7 @@ pub unsafe extern "C" fn acegf_view_wallet_with_prf(
                 "cosmos_address": entity.cosmos_address,
                 "polkadot_address": entity.polkadot_address,
                 "xaddress": entity.xaddress,
-                "xidentity": entity.xidentity,
+                "x25519": entity.x25519,
                 "xkem": entity.xkem,
             });
             to_cstring(json.to_string())

@@ -718,9 +718,9 @@ The transaction is submitted to a private mempool or directly to a FOCIL-enabled
 After the transaction is confirmed, the sender notifies the recipient via encrypted communication:
 
 ```
-// Sender has recipient's X25519 public key (their xidentity)
+// Sender has recipient's X25519 public key (their x25519)
 (ephemeral_pub, encrypted_aes_key, iv, encrypted_data) =
-    ACEGF::encrypt_for_xidentity(recipient_xidentity, tx_receipt)
+    ACEGF::encrypt_for_x25519(recipient_x25519, tx_receipt)
 
 // Recipient decrypts with their ACE-GF derived X25519 private key
 tx_receipt = ACEGF::decrypt_internal(

@@ -396,7 +396,7 @@
    \{
    \text{Ed25519 keys},\,
    \text{Secp256k1 keys},\,
-   \text{X25519 DH keys (xIdentity/xID)},\,
+   \text{X25519 DH keys (x25519/xID)},\,
    \ldots
    \}.
   \]
@@ -409,7 +409,7 @@
   is not intended to introduce a new primitive; it merely provides a compact
   name for the aggregate identity state reconstructed by a \emph{Crypto Entity}.
 
-  \paragraph{xIdentity (xID).}
+  \paragraph{x25519 (xID).}
   ACE-GF derives a deterministic X25519-based encryption identity (xID)
   that serves as the long-term E2EE identity for a Crypto Entity.
   Session keys are derived via HKDF using unique context labels, providing
@@ -472,7 +472,7 @@
    never compromises others.
 
    \item \textbf{Native E2EE identity capability:}
-   The system derives a deterministic X25519-based xIdentity to serve as a
+   The system derives a deterministic X25519-based x25519 to serve as a
    static root for Diffie--Hellman negotiations, enabling secure, forward-secret
    communication channels without seed persistence.
 
@@ -692,8 +692,8 @@
    \mathsf{DS}_{\mathsf{x25519}}  &= \texttt{ACEGF-V1-X25519-IDENTITY}
   \end{align*}
 
-  \paragraph{xIdentity (xID).}
-  The derived X25519 key pair serves as the deterministic \emph{xIdentity} (xID) of the Crypto Entity.
+  \paragraph{x25519 (xID).}
+  The derived X25519 key pair serves as the deterministic \emph{x25519} (xID) of the Crypto Entity.
   Unlike ephemeral session keys, the xID is a long-term, stable public identifier used for
   establishing E2EE channels (e.g., as a static Diffie--Hellman root).
   It allows the Crypto Entity to be discoverable and addressable across contexts.
