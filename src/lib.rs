@@ -27,4 +27,5 @@ pub mod wasm_zk;
 
 pub use acegf::{HybridEncryptedPayload, ACEGF};
 pub use session::{EncryptedPayload, GeneratedWallet, Session, WalletPublicView};
+pub use signer::MlDsa44Signer;
 pub use vadar::VADAR;

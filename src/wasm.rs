@@ -2111,6 +2111,41 @@ pub fn ml_dsa_44_pubkey_hex(mnemonic: &str, passphrase: &str) -> String {
     }
 }
 
+/// Get the ML-DSA-44 public key (1312 bytes) as hex under an arbitrary context.
+#[wasm_bindgen]
+pub fn ml_dsa_44_pubkey_hex_with_context(
+    mnemonic: &str,
+    passphrase: &str,
+    context: &[u8],
+) -> String {
+    use crate::signer::MlDsa44Signer;
+
+    match MlDsa44Signer::pubkey_with_context(mnemonic, passphrase, None, context) {
+        Ok(pk) => hex::encode(pk),
+        Err(e) => format!("error:{e}"),
+    }
+}
+
+/// Sign a message with ML-DSA-44 under an arbitrary context.
+/// Returns base64 signature (2420 bytes) on success, or "error:..." on failure.
+#[wasm_bindgen]
+pub fn ml_dsa_44_sign_with_context_wasm(
+    mnemonic: &str,
+    passphrase: &str,
+    context: &[u8],
+    message: &[u8],
+) -> String {
+    use crate::signer::MlDsa44Signer;
+
+    match MlDsa44Signer::sign_with_context(mnemonic, passphrase, None, context, message) {
+        Ok(sig) => {
+            use base64ct::{Base64, Encoding};
+            Base64::encode_string(&sig)
+        }
+        Err(e) => format!("error:{e}"),
+    }
+}
+
 /// Sign a message with ML-DSA-44 (FIPS 204, post-quantum).
 /// Returns base64 signature (2420 bytes) on success, or "error:..." on failure.
 #[wasm_bindgen]
